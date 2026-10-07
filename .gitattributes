@@ -1,0 +1,10 @@
+# Keep line endings consistent across Windows and other systems.
+* text=auto
+
+# Rust sources and config always use LF.
+*.rs text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+
+# Images are binary, never touch them.
+*.png binary
