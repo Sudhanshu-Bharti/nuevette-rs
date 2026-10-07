@@ -35,8 +35,8 @@ impl Vec2 {
 }
 
 pub const ROOT_SIZE: Vec2 = Vec2::new(280., 156.);
-pub const TOPIC_SIZE: Vec2 = Vec2::new(264., 140.);
-pub const SUBTOPIC_SIZE: Vec2 = Vec2::new(248., 140.);
+pub const TOPIC_SIZE: Vec2 = Vec2::new(264., 148.);
+pub const SUBTOPIC_SIZE: Vec2 = Vec2::new(248., 148.);
 
 /// Between the path card and the topic column.
 const ROOT_GAP: f32 = 96.;

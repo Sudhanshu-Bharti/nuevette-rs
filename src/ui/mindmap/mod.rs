@@ -36,6 +36,8 @@ use layout::{MapNode, NodeKind, Vec2};
 /// Pointer travel (px) under which a press on empty canvas is a click.
 const CLICK_SLOP: f32 = 3.;
 const FIT_MARGIN: f32 = 48.;
+/// The farthest out a selected card is shown when the camera moves to it.
+const READABLE_ZOOM: f32 = 0.6;
 const ZOOM_STEP: f32 = 1.25;
 /// Width of the inspector panel, in px.
 pub(super) const INSPECTOR_WIDTH: f32 = 340.;
@@ -307,7 +309,9 @@ impl MindMapView {
         cx.notify();
     }
 
-    /// Selects the node for `kind` and pans it to the center of the view.
+    /// Selects the node for `kind` and brings it into view beside the
+    /// inspector: the whole path when it still reads at that size, otherwise
+    /// the card centered at a readable zoom.
     fn select_kind(&mut self, kind: NodeKind, cx: &mut Context<Self>) {
         let Some(ix) = self.nodes.iter().position(|n| n.kind == kind) else {
             return;
@@ -315,12 +319,36 @@ impl MindMapView {
         if let Some((w, h)) = self.view_size() {
             // Selecting opens the inspector, which covers the right edge.
             let w = (w - INSPECTOR_COVER).max(w / 2.);
-            let center = self.nodes[ix].center();
-            let zoom = self.viewport.zoom;
-            let target = Viewport::new(center.x - w / 2. / zoom, center.y - h / 2. / zoom, zoom);
+            let (min, max) = layout::bounds(&self.nodes);
+            let whole = Viewport::fitting(Frame::new(min.x, min.y, max.x - min.x, max.y - min.y), (w, h), FIT_MARGIN);
+            let target = if whole.zoom >= READABLE_ZOOM {
+                whole
+            } else {
+                let center = self.nodes[ix].center();
+                let zoom = self.viewport.zoom.max(READABLE_ZOOM);
+                // Centered on the card, but never showing more empty canvas
+                // past the path's edges than the fit margin.
+                let axis = |center: f32, view: f32, min: f32, max: f32| {
+                    let (span, margin) = (view / zoom, FIT_MARGIN / zoom);
+                    if max - min + 2. * margin <= span {
+                        min - (span - (max - min)) / 2.
+                    } else {
+                        (center - span / 2.).clamp(min - margin, max + margin - span)
+                    }
+                };
+                Viewport::new(axis(center.x, w, min.x, max.x), axis(center.y, h, min.y, max.y), zoom)
+            };
             self.animate_to(target, cx);
         }
         self.select(Some(ix), cx);
+    }
+
+    /// Closes the inspector and glides back to the whole path.
+    pub(super) fn close_inspector(&mut self, cx: &mut Context<Self>) {
+        if self.selected.take().is_some() {
+            self.fit_view(cx);
+        }
+        cx.notify();
     }
 
     /// Selects a topic (e.g. from the command palette).
@@ -404,7 +432,7 @@ impl MindMapView {
         if let Some(press) = self.press.take() {
             let moved = event.position - press;
             if f32::from(moved.x).abs() < CLICK_SLOP && f32::from(moved.y).abs() < CLICK_SLOP {
-                self.select(None, cx);
+                self.close_inspector(cx);
             }
         }
     }
@@ -564,7 +592,7 @@ impl Render for MindMapView {
                 this.zoom_to(zoom, cx)
             }))
             .on_action(cx.listener(|this, _: &FitView, _, cx| this.fit_view(cx)))
-            .on_action(cx.listener(|this, _: &Deselect, _, cx| this.select(None, cx)))
+            .on_action(cx.listener(|this, _: &Deselect, _, cx| this.close_inspector(cx)))
             .on_action(cx.listener(|this, _: &ToggleDone, _, cx| this.toggle_selected(cx)))
             .on_action(cx.listener(|this, _: &SelectUp, _, cx| this.move_selection(Direction::Up, cx)))
             .on_action(cx.listener(|this, _: &SelectDown, _, cx| this.move_selection(Direction::Down, cx)))

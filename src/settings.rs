@@ -19,18 +19,6 @@ pub enum ThemeChoice {
     System,
 }
 
-impl ThemeChoice {
-    pub const ALL: [ThemeChoice; 3] = [ThemeChoice::Dark, ThemeChoice::Light, ThemeChoice::System];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            ThemeChoice::Dark => "Dark",
-            ThemeChoice::Light => "Light",
-            ThemeChoice::System => "System",
-        }
-    }
-}
-
 /// How strongly the backdrop glow shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

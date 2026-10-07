@@ -318,6 +318,8 @@ impl Render for TodayView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let paths: Vec<LearningPath> = self.store.read(cx).paths().to_vec();
         let (greeting, date) = Self::greeting();
+        let name = cx.global::<crate::settings::Settings>().name.trim().to_string();
+        let greeting = if name.is_empty() { greeting.to_string() } else { format!("{greeting}, {name}") };
         let c = cx.theme().colors.clone();
         let heading = div()
             .flex()

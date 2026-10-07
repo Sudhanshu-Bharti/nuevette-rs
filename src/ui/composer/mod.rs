@@ -163,8 +163,8 @@ impl ComposerView {
             input,
             goal,
             background,
-            level: Level::Beginner,
-            pace: None,
+            level: cx.global::<crate::settings::Settings>().level,
+            pace: cx.global::<crate::settings::Settings>().pace,
             error: None,
             failure: None,
             phase: Phase::Idle,
@@ -176,6 +176,17 @@ impl ComposerView {
     /// The path `path_id` was deleted; stop writing it if it is being built.
     pub fn abandon(&mut self, path_id: &str, cx: &mut Context<Self>) {
         if self.phase.abandon(path_id) {
+            cx.notify();
+        }
+    }
+
+    /// A fresh form picks up the level and pace saved in Settings; one being
+    /// filled in keeps what the learner chose.
+    pub fn apply_defaults(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.phase, Phase::Idle) && self.input.read(cx).text().trim().is_empty() {
+            let settings = cx.global::<crate::settings::Settings>();
+            self.level = settings.level;
+            self.pace = settings.pace;
             cx.notify();
         }
     }

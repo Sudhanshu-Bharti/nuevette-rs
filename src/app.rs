@@ -3,12 +3,11 @@
 //! deletes (with undo), new paths and map actions.
 
 use ely_gpui_component::feedback::{Toast, ToastViewport, Toaster};
-use ely_gpui_component::navigation::{Command, CommandPalette};
 use ely_gpui_component::primitives::{FocusScope, IconName, Severity};
 use ely_gpui_component::shell::{StatusBar, StatusBarItem};
 use ely_gpui_component::theme::{ActiveTheme, TextSize};
 use gpui::{
-    Context, Entity, FocusHandle, Focusable, IntoElement, Render, SharedString, Subscription,
+    App, Context, Entity, FocusHandle, Focusable, IntoElement, Render, Subscription,
     Window, div, prelude::*,
 };
 
@@ -20,7 +19,10 @@ use crate::ui::today::{TodayEvent, TodayView};
 use crate::ui::mindmap::{MapEvent, MindMapView};
 use crate::ui::glass;
 use crate::ui::nav::{self, NavItem};
+use crate::settings::{Settings, ThemeChoice};
+use crate::ui::palette::{Command, Group, PaletteEvent, PaletteView};
 use crate::ui::paths::{PathsEvent, PathsView};
+use crate::ui::settings_view::{SettingsEvent, SettingsView};
 use crate::ui::titlebar;
 
 /// What the stage shows when no path is open.
@@ -29,18 +31,22 @@ enum Screen {
     Today,
     Compose,
     Paths,
+    Settings,
 }
 
 pub struct NuevetteApp {
     store: Entity<PathStore>,
     today: Entity<TodayView>,
     paths: Entity<PathsView>,
+    settings: Entity<SettingsView>,
     composer: Entity<ComposerView>,
     screen: Screen,
     toaster: Entity<Toaster>,
     /// The open path and its view; it takes the stage over `screen`.
     mindmap: Option<(String, Entity<MindMapView>)>,
-    palette_open: bool,
+    /// The open command palette, if any.
+    palette: Option<Entity<PaletteView>>,
+    _palette_sub: Option<Subscription>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
     _map_sub: Option<Subscription>,
@@ -51,11 +57,25 @@ impl NuevetteApp {
         let store = cx.new(|_| PathStore::load());
         let today = cx.new(|cx| TodayView::new(store.clone(), cx));
         let paths = cx.new(|cx| PathsView::new(store.clone(), cx));
+        let settings = cx.new(|cx| SettingsView::new(store.clone(), window, cx));
         let composer = cx.new(|cx| ComposerView::new(window, cx));
         let toaster = cx.new(|_| Toaster::default());
 
         let _subscriptions = vec![
             cx.observe(&store, |_, _, cx| cx.notify()),
+            // "System" follows Windows' light or dark setting as it changes.
+            cx.observe_window_appearance(window, |_, window, cx| {
+                crate::theme::apply(window.appearance(), cx);
+            }),
+            cx.subscribe_in(&settings, window, |this, _, event, _, cx| match event {
+                SettingsEvent::ClearData => this.clear_data(cx),
+                SettingsEvent::Exported(file) => {
+                    this.toast(Toast::new("Paths exported").body(file.clone()).severity(Severity::Success), cx)
+                }
+                SettingsEvent::ExportFailed(error) => {
+                    this.toast(Toast::new("Couldn't export").body(error.clone()).severity(Severity::Danger), cx)
+                }
+            }),
             cx.subscribe_in(&paths, window, |this, _, event, window, cx| match event {
                 PathsEvent::Open(id) => this.open_path(id, window, cx),
                 PathsEvent::Delete(id) => this.delete_path(id, window, cx),
@@ -111,15 +131,41 @@ impl NuevetteApp {
             store,
             today,
             paths,
+            settings,
             composer,
             screen: Screen::Today,
             toaster,
             mindmap: None,
-            palette_open: false,
+            palette: None,
+            _palette_sub: None,
             focus,
             _subscriptions,
             _map_sub: None,
         }
+    }
+
+    /// Clears every path at once and offers them back.
+    fn clear_data(&mut self, cx: &mut Context<Self>) {
+        self.mindmap = None;
+        let removed = self.store.update(cx, |store, cx| store.clear(cx));
+        let count = removed.len();
+        let store = self.store.clone();
+        let toast = Toast::new("Local data cleared")
+            .body(format!("{count} path{} deleted.", if count == 1 { "" } else { "s" }))
+            .undo(move |_, cx| {
+                let paths = removed.clone();
+                store.update(cx, |store, cx| store.restore_all(paths, cx));
+            });
+        self.toast(toast, cx);
+        cx.notify();
+    }
+
+    /// Flips between light and dark. From "System", it pins the opposite of
+    /// what is showing.
+    fn toggle_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let next = if cx.theme().is_dark() { ThemeChoice::Light } else { ThemeChoice::Dark };
+        Settings::update(cx, |settings| settings.theme = next);
+        crate::theme::apply(window.appearance(), cx);
     }
 
     fn toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
@@ -160,7 +206,10 @@ impl NuevetteApp {
         self.mindmap = None;
         self.screen = screen;
         if screen == Screen::Compose {
-            self.composer.update(cx, |composer, cx| composer.focus_input(window, cx));
+            self.composer.update(cx, |composer, cx| {
+                composer.apply_defaults(cx);
+                composer.focus_input(window, cx)
+            });
         } else {
             self.focus.focus(window, cx);
         }
@@ -194,22 +243,22 @@ impl NuevetteApp {
             NavItem::Today => self.show(Screen::Today, window, cx),
             NavItem::NewPath => self.show(Screen::Compose, window, cx),
             NavItem::Paths => self.show(Screen::Paths, window, cx),
-            NavItem::Search => {
-                self.palette_open = true;
-                cx.notify();
-            }
+            NavItem::Settings => self.show(Screen::Settings, window, cx),
+            NavItem::Theme => self.toggle_theme(window, cx),
+            NavItem::Search => self.open_palette(window, cx),
         }
     }
 
     /// Runs a command picked in the palette. Values are "kind:argument".
     fn run_command(&mut self, value: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.palette_open = false;
         let (kind, arg) = value.split_once(':').unwrap_or((value, ""));
         let map = self.mindmap.as_ref().map(|(_, map)| map.clone());
         match (kind, arg, map) {
             ("action", "new", _) => self.show(Screen::Compose, window, cx),
             ("action", "today", _) => self.show(Screen::Today, window, cx),
             ("action", "paths", _) => self.show(Screen::Paths, window, cx),
+            ("action", "settings", _) => self.show(Screen::Settings, window, cx),
+            ("action", "theme", _) => self.toggle_theme(window, cx),
             ("action", "fit", Some(map)) => map.update(cx, |map, cx| map.fit(cx)),
             ("action", "export", Some(map)) => map.update(cx, |map, cx| map.export(cx)),
             ("path", id, _) => self.open_path(id, window, cx),
@@ -229,49 +278,73 @@ impl NuevetteApp {
         cx.notify();
     }
 
-    fn palette(&self, cx: &mut Context<Self>) -> CommandPalette {
+    /// The palette's commands: actions, the open path's steps, every path.
+    fn palette_groups(&self, cx: &App) -> Vec<Group> {
         let store = self.store.read(cx);
         let open = self.mindmap.as_ref().and_then(|(id, _)| store.get(id));
+        let dark = cx.theme().is_dark();
         let mut actions = vec![
-            Command::new("action:new", "New path").icon(IconName::Plus).keys("ctrl-n"),
-            Command::new("action:today", "Go to Today").icon(IconName::House),
-            Command::new("action:paths", "Go to Paths").icon(IconName::Layers),
+            Command::new("action:new", "New path", IconName::Plus).keys(&["Ctrl", "N"]),
+            Command::new("action:today", "Go to Today", IconName::House),
+            Command::new("action:paths", "Go to Paths", IconName::Layers),
+            Command::new("action:settings", "Open Settings", IconName::Settings),
+            Command::new(
+                "action:theme",
+                if dark { "Switch to light mode" } else { "Switch to dark mode" },
+                if dark { IconName::Sun } else { IconName::Moon },
+            ),
         ];
         if open.is_some() {
-            actions.push(Command::new("action:fit", "Fit the map").icon(IconName::Maximize2).keys("ctrl-0"));
-            actions.push(Command::new("action:export", "Export as Markdown").icon(IconName::Download));
+            actions.push(Command::new("action:fit", "Fit the map", IconName::Maximize2).keys(&["Ctrl", "0"]));
+            actions.push(Command::new("action:export", "Export as Markdown", IconName::Download));
         }
-        let paths: Vec<Command> = store
-            .paths()
-            .iter()
-            .map(|p| Command::new(format!("path:{}", p.id), p.name.clone()).icon(IconName::BookOpen))
-            .collect();
-        let mut palette = CommandPalette::new("palette", {
-            let app = cx.entity().downgrade();
-            move |_, cx| {
-                app.update(cx, |app, cx| {
-                    app.palette_open = false;
-                    cx.notify();
-                })
-                .ok();
-            }
-        })
-        .group("Actions", actions);
+        let mut groups = vec![Group { title: "Actions".into(), commands: actions }];
         if let Some(path) = open {
             let mut steps = Vec::new();
             for (t, topic) in path.topics.iter().enumerate() {
-                steps.push(Command::new(format!("topic:{t}"), format!("{}. {}", t + 1, topic.name)).icon(IconName::Layers));
+                steps.push(Command::new(format!("topic:{t}"), format!("{}. {}", t + 1, topic.name), IconName::Layers));
                 for (s, sub) in topic.subtopics.iter().enumerate() {
                     let icon = if path.is_done(t, s) { IconName::CircleCheck } else { IconName::BookOpen };
-                    steps.push(Command::new(format!("sub:{t}.{s}"), format!("{}.{} {}", t + 1, s + 1, sub.name)).icon(icon));
+                    steps.push(Command::new(format!("sub:{t}.{s}"), format!("{}.{} {}", t + 1, s + 1, sub.name), icon));
                 }
             }
-            palette = palette.group(SharedString::from(format!("In \u{201c}{}\u{201d}", path.name)), steps);
+            groups.push(Group { title: format!("In \u{201c}{}\u{201d}", path.name).into(), commands: steps });
         }
-        let app = cx.entity().downgrade();
-        palette.group("Paths", paths).on_run(move |value, window, cx| {
-            app.update(cx, |app, cx| app.run_command(value, window, cx)).ok();
-        })
+        let paths = store
+            .paths()
+            .iter()
+            .map(|p| Command::new(format!("path:{}", p.id), p.name.clone(), IconName::BookOpen))
+            .collect();
+        groups.push(Group { title: "Paths".into(), commands: paths });
+        groups
+    }
+
+    fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.palette.is_some() {
+            return;
+        }
+        let groups = self.palette_groups(cx);
+        let palette = cx.new(|cx| PaletteView::new(groups, window, cx));
+        self._palette_sub = Some(cx.subscribe_in(&palette, window, |this, _, event, window, cx| match event {
+            PaletteEvent::Run(value) => {
+                let value = value.to_string();
+                this.close_palette(window, cx);
+                this.run_command(&value, window, cx);
+            }
+            PaletteEvent::Dismiss => this.close_palette(window, cx),
+        }));
+        self.palette = Some(palette);
+        cx.notify();
+    }
+
+    fn close_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.palette = None;
+        self._palette_sub = None;
+        match &self.mindmap {
+            Some((_, map)) => map.focus_handle(cx).focus(window, cx),
+            None => self.focus.focus(window, cx),
+        }
+        cx.notify();
     }
 
     fn status_bar(&self, cx: &Context<Self>) -> StatusBar {
@@ -312,18 +385,22 @@ impl Render for NuevetteApp {
             (None, Screen::Today) => self.today.clone().into_any_element(),
             (None, Screen::Compose) => self.composer.clone().into_any_element(),
             (None, Screen::Paths) => self.paths.clone().into_any_element(),
+            (None, Screen::Settings) => self.settings.clone().into_any_element(),
         };
         let active = match (&self.mindmap, self.screen) {
             (Some(_), _) => None,
             (None, Screen::Today) => Some(NavItem::Today),
             (None, Screen::Compose) => Some(NavItem::NewPath),
             (None, Screen::Paths) => Some(NavItem::Paths),
+            (None, Screen::Settings) => Some(NavItem::Settings),
         };
         let status = self.status_bar(cx);
-        let palette = self.palette_open.then(|| self.palette(cx));
+        let palette = self.palette.clone();
         let app = cx.entity().downgrade();
+        let initial = cx.global::<Settings>().initial();
         let nav = nav::pill_nav(
             active,
+            initial,
             move |item, window, cx| {
                 app.update(cx, |app, cx| app.navigate(item, window, cx)).ok();
             },
@@ -331,6 +408,7 @@ impl Render for NuevetteApp {
         );
         let brand = nav::brand(cx);
         let title_bar = titlebar::title_bar(brand, nav, window, cx);
+        let glow = glass::glow(1., cx);
         let theme = cx.theme();
 
         FocusScope::new(&self.focus)
@@ -341,15 +419,12 @@ impl Render for NuevetteApp {
             .text_size(theme.text_size(TextSize::Base))
             .text_color(theme.colors.fg)
             .bg(theme.colors.bg)
-            .child(glass::glow(1., cx))
+            .child(glow)
             .child(
                 div()
                     .key_context("Nuevette")
                     .on_action(cx.listener(|this, _: &NewPath, window, cx| this.show(Screen::Compose, window, cx)))
-                    .on_action(cx.listener(|this, _: &OpenPalette, _, cx| {
-                        this.palette_open = true;
-                        cx.notify();
-                    }))
+                    .on_action(cx.listener(|this, _: &OpenPalette, window, cx| this.open_palette(window, cx)))
                     .relative()
                     .size_full()
                     .flex()

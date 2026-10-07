@@ -214,7 +214,7 @@ impl MindMapView {
 
         let footer = self.render_footer(kind, cx);
         let close = glass::icon_button("close-inspector", IconName::X, "Close (Esc)", cx)
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.select(None, cx)));
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.close_inspector(cx)));
 
         // A floating glass panel; it slides and fades in when it first opens
         // and stays put while the selection changes.
