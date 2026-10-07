@@ -68,7 +68,7 @@ impl SettingsView {
             .child(
                 div()
                     .flex_1()
-                    .min_w_0()
+                    .min_w(px(140.))
                     .flex()
                     .flex_col()
                     .gap_0p5()
@@ -232,7 +232,18 @@ impl Render for SettingsView {
         let fallback = config.gemini_fallback_model.clone().unwrap_or_else(|| "None".into());
         let folder = data_dir().map(|dir| dir.display().to_string()).unwrap_or_else(|| "Not available".into());
         let mono = cx.theme().mono_family.clone();
-        let value = |text: String| div().font_family(mono.clone()).text_size(px(13.)).text_color(c.fg_muted).child(text);
+        // Values give way (with an ellipsis) before labels do.
+        let value = |text: String| {
+            div()
+                .min_w_0()
+                .max_w(px(260.))
+                .overflow_hidden()
+                .text_ellipsis()
+                .font_family(mono.clone())
+                .text_size(px(13.))
+                .text_color(c.fg_muted)
+                .child(text)
+        };
         let clear_label = if self.confirm_clear.is_some() { "Click again to delete" } else { "Clear local data" };
         let ai = GlassCard::new()
             .title("AI & data")
@@ -276,29 +287,36 @@ impl Render for SettingsView {
             );
 
         ScrollArea::new("settings").size_full().child(
-            div().flex().justify_center().child(
-                div()
-                    .w_full()
-                    .max_w(px(760.))
-                    .px_10()
-                    .pt_8()
-                    .pb_16()
-                    .flex()
-                    .flex_col()
-                    .gap_5()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(div().text_size(px(32.)).font_weight(FontWeight::MEDIUM).child("Settings"))
-                            .child(div().text_color(c.fg_muted).child("Saved on this computer as you change them.")),
-                    )
-                    .child(profile)
-                    .child(appearance)
-                    .child(defaults)
-                    .child(ai),
-            ),
+            div()
+                .flex()
+                .flex_col()
+                .gap_4()
+                .px_6()
+                .pt_2()
+                .pb_5()
+                .child(
+                    div()
+                        .flex()
+                        .items_baseline()
+                        .gap_3()
+                        .child(div().text_size(px(22.)).font_weight(FontWeight::SEMIBOLD).child("Settings"))
+                        .child(
+                            div()
+                                .text_size(px(13.))
+                                .text_color(c.fg_muted)
+                                .child("Saved on this computer as you change them."),
+                        ),
+                )
+                // Two columns, so everything fits without scrolling on a
+                // normal window; the scroll area is only a fallback.
+                .child(
+                    div()
+                        .flex()
+                        .items_start()
+                        .gap_4()
+                        .child(div().flex_1().min_w_0().flex().flex_col().gap_4().child(profile).child(appearance))
+                        .child(div().flex_1().min_w_0().flex().flex_col().gap_4().child(defaults).child(ai)),
+                ),
         )
     }
 }

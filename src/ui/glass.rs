@@ -6,6 +6,7 @@
 use ely_gpui_component::primitives::{Icon, IconName, Tooltip};
 use ely_gpui_component::theme::{ActiveTheme, IconSize};
 use gpui::{
+    AnimationExt,
     AnyElement, App, BoxShadow, Div, ElementId, FontWeight, Hsla, IntoElement, ObjectFit, ParentElement, RenderOnce,
     SharedString, Stateful, Window, div, img, linear_color_stop, linear_gradient, point, prelude::*, px,
 };
@@ -14,16 +15,6 @@ use crate::model::LearningPath;
 
 const CARD_RADIUS: f32 = 18.;
 const DENSE_RADIUS: f32 = 14.;
-
-/// Splits a stat into its whole part and the rest, which is drawn dimmer:
-/// "6.5 h" -> ("6", ".5 h"), "71.4%" -> ("71", ".4%").
-pub fn split_number(text: &str) -> (String, String) {
-    let end = text
-        .char_indices()
-        .find(|(i, ch)| !(ch.is_ascii_digit() || *ch == ',' || (*i == 0 && matches!(ch, '~' | '-' | '+'))))
-        .map_or(text.len(), |(i, _)| i);
-    (text[..end].to_string(), text[end..].to_string())
-}
 
 /// Whether the light ("frosted") theme is showing.
 pub fn is_light(cx: &App) -> bool {
@@ -99,7 +90,6 @@ fn sheen() -> Div {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Hue {
-    Accent,
     Success,
     Neutral,
 }
@@ -108,7 +98,6 @@ impl Hue {
     fn color(self, cx: &App) -> Hsla {
         let c = &cx.theme().colors;
         match self {
-            Hue::Accent => c.accent,
             Hue::Success => c.success,
             Hue::Neutral => c.fg_muted,
         }
@@ -141,20 +130,6 @@ pub fn eyebrow(text: impl Into<SharedString>, cx: &App) -> Div {
         .font_weight(FontWeight::MEDIUM)
         .text_color(cx.theme().colors.fg_muted)
         .child(text.to_uppercase())
-}
-
-/// A big, light number; whatever follows the whole part is dimmed.
-pub fn stat_value(text: &str, cx: &App) -> Div {
-    let c = &cx.theme().colors;
-    let (whole, rest) = split_number(text);
-    div()
-        .flex()
-        .items_baseline()
-        .text_size(px(40.))
-        .line_height(px(48.))
-        .font_weight(FontWeight::LIGHT)
-        .child(div().text_color(c.fg).child(whole))
-        .child(div().text_color(c.fg_subtle).child(rest))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -297,6 +272,24 @@ pub fn meter(share: f32, cx: &App) -> Div {
         )
 }
 
+/// A meter that eases from `from` to `to` once, keyed so it runs again
+/// whenever the value it shows changes (e.g. a step marked done).
+pub fn meter_easing(key: impl Into<SharedString>, from: f32, to: f32, cx: &App) -> impl IntoElement {
+    let (from, to) = (meter_share(from), meter_share(to));
+    let c = &cx.theme().colors;
+    let fill = if to >= 1. { c.success } else { c.accent };
+    div()
+        .h(px(4.))
+        .w_full()
+        .rounded_full()
+        .bg(ink(cx, 0.08))
+        .child(div().h_full().rounded_full().bg(fill).with_animation(
+            ElementId::Name(key.into()),
+            gpui::Animation::new(std::time::Duration::from_millis(420)).with_easing(gpui::ease_out_quint()),
+            move |bar, d| bar.w(gpui::relative(from + (to - from) * d)),
+        ))
+}
+
 /// A round icon button for the nav; the caller adds `.on_click` and a tooltip.
 pub fn round_icon(id: impl Into<ElementId>, icon: IconName, cx: &App) -> Stateful<Div> {
     let c = &cx.theme().colors;
@@ -320,22 +313,6 @@ pub fn round_icon(id: impl Into<ElementId>, icon: IconName, cx: &App) -> Statefu
 /// A small round icon button with a tooltip, for rows and panels.
 pub fn icon_button(id: impl Into<ElementId>, icon: IconName, tip: &'static str, cx: &App) -> Stateful<Div> {
     round_icon(id, icon, cx).size(px(28.)).tooltip(Tooltip::text(tip))
-}
-
-/// A round glass badge holding an icon, for the corner of a stat card.
-pub fn badge(icon: IconName, cx: &App) -> Div {
-    let c = &cx.theme().colors;
-    div()
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .size(px(36.))
-        .rounded_full()
-        .bg(ink(cx, 0.05))
-        .border_1()
-        .border_color(ink(cx, 0.12))
-        .child(Icon::new(icon).size(IconSize::Sm).color(c.fg))
 }
 
 /// A path's color circle with its initial.
@@ -363,6 +340,28 @@ pub fn avatar(path: &LearningPath, cx: &App) -> Div {
         .child(initial)
 }
 
+/// The glass surface every card is built on, as a plain flex column the
+/// caller can size (e.g. `flex_1` to fill a panel and scroll inside).
+pub fn shell(dense: bool, cx: &App) -> Div {
+    let c = &cx.theme().colors;
+    div()
+        .relative()
+        .flex()
+        .flex_col()
+        .rounded(px(if dense { DENSE_RADIUS } else { CARD_RADIUS }))
+        .bg(card_fill(cx, dense))
+        .border_1()
+        .border_color(c.border)
+        .shadow(vec![BoxShadow {
+            color: shade(cx, if dense { 0.22 } else { 0.35 }),
+            offset: point(px(0.), px(if dense { 4. } else { 8. })),
+            blur_radius: px(if dense { 12. } else { 24. }),
+            spread_radius: px(0.),
+            inset: false,
+        }])
+        .child(sheen())
+}
+
 /// A glass card: optional title row, body, optional footer strip.
 #[derive(IntoElement)]
 pub struct GlassCard {
@@ -377,12 +376,6 @@ pub struct GlassCard {
 impl GlassCard {
     pub fn new() -> Self {
         Self { dense: false, title: None, description: None, action: None, body: Vec::new(), footer: None }
-    }
-
-    /// Smaller radius and quieter shadow, for rows and lists.
-    pub fn dense(mut self) -> Self {
-        self.dense = true;
-        self
     }
 
     pub fn title(mut self, title: impl Into<SharedString>) -> Self {
@@ -421,15 +414,7 @@ impl ParentElement for GlassCard {
 impl RenderOnce for GlassCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let c = cx.theme().colors.clone();
-        let radius = if self.dense { DENSE_RADIUS } else { CARD_RADIUS };
         let pad = px(if self.dense { 16. } else { 20. });
-        let shadow = BoxShadow {
-            color: shade(cx, if self.dense { 0.22 } else { 0.35 }),
-            offset: point(px(0.), px(if self.dense { 4. } else { 8. })),
-            blur_radius: px(if self.dense { 12. } else { 24. }),
-            spread_radius: px(0.),
-            inset: false,
-        };
         let header = (self.title.is_some() || self.action.is_some()).then(|| {
             div()
                 .flex()
@@ -447,16 +432,7 @@ impl RenderOnce for GlassCard {
                 )
                 .children(self.action)
         });
-        div()
-            .relative()
-            .flex()
-            .flex_col()
-            .rounded(px(radius))
-            .bg(card_fill(cx, self.dense))
-            .border_1()
-            .border_color(c.border)
-            .shadow(vec![shadow])
-            .child(sheen())
+        shell(self.dense, cx)
             .child(div().flex().flex_col().gap_4().p(pad).children(header).children(self.body))
             .children(self.footer.map(|footer| {
                 div()
@@ -490,14 +466,4 @@ mod tests {
         assert_eq!(meter_share(f32::NAN), 0.);
     }
 
-    #[test]
-    fn split_number_dims_what_follows_the_whole_part() {
-        assert_eq!(split_number("6.5 h"), ("6".into(), ".5 h".into()));
-        assert_eq!(split_number("71.4%"), ("71".into(), ".4%".into()));
-        assert_eq!(split_number("12"), ("12".into(), String::new()));
-        assert_eq!(split_number("4 days"), ("4".into(), " days".into()));
-        assert_eq!(split_number("~33 hours"), ("~33".into(), " hours".into()));
-        assert_eq!(split_number("-3"), ("-3".into(), String::new()));
-        assert_eq!(split_number(""), (String::new(), String::new()));
-    }
 }

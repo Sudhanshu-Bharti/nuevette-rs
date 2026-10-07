@@ -1,13 +1,14 @@
-//! Today: where a returning learner lands. How the week is going, what to
-//! study next, and the paths in progress.
+//! Today: where a returning learner lands. One focused column: a greeting
+//! with the week in quiet numbers, the single next step as the only card,
+//! then every path as a flat list, and recent activity only when there is
+//! some. It fits the window; only the list scrolls.
 
 use ely_gpui_component::layout::ScrollArea;
 use ely_gpui_component::primitives::{Icon, IconName};
 use ely_gpui_component::theme::{ActiveTheme, IconSize};
-use ely_gpui_component::typography::Caption;
 use gpui::{
-    AnyElement, App, ClickEvent, Context, Entity, EventEmitter, FontWeight, IntoElement, Render, Subscription,
-    Window, div, prelude::*, px,
+    AnyElement, App, ClickEvent, Context, Entity, EventEmitter, FontWeight, IntoElement, Render, SharedString,
+    Subscription, Window, div, prelude::*, px,
 };
 use jiff::tz::TimeZone;
 
@@ -15,11 +16,13 @@ use crate::model::LearningPath;
 use crate::stats::{self, Summary};
 use crate::store::PathStore;
 use crate::ui::glass::{self, GlassCard, Hue, PillStyle};
-use crate::ui::paths::{Status, percent, status};
+use crate::ui::paths::{Status, status};
+use crate::ui::rows;
 
-/// Below this window width, stat cards sit two to a row instead of three.
-const WIDE_WINDOW: f32 = 1200.;
-const IN_PROGRESS_ROWS: usize = 5;
+/// The column's width: wide enough for a row, narrow enough to read.
+const COLUMN: f32 = 780.;
+/// Recent completions shown under the list.
+const RECENT: usize = 3;
 
 pub enum TodayEvent {
     Open(String),
@@ -62,56 +65,34 @@ impl TodayView {
         (greeting, now.strftime("%A, %-d %B").to_string())
     }
 
-    fn stat_card(label: &'static str, icon: IconName, value: String, chip: (String, Hue), cx: &App) -> AnyElement {
-        GlassCard::new()
-            .child(
-                div()
-                    .flex()
-                    .items_start()
-                    .justify_between()
-                    .child(div().pt_2().child(glass::eyebrow(label, cx)))
-                    .child(glass::badge(icon, cx)),
-            )
-            .child(glass::stat_value(&value, cx))
-            .child(div().flex().child(glass::chip(chip.0, chip.1, cx)))
-            .into_any_element()
-    }
-
-    fn render_stats(summary: &Summary, columns: u16, cx: &App) -> AnyElement {
-        let streak_chip = if summary.streak_days > 0 {
-            ("Keep it going".to_string(), Hue::Accent)
-        } else {
-            ("Finish one today".to_string(), Hue::Neutral)
-        };
+    /// The week as one quiet line of numbers: "3 done · 4.5 h · 2-day streak".
+    fn week_line(summary: &Summary, cx: &App) -> AnyElement {
+        let c = &cx.theme().colors;
+        let number = |text: String| div().text_color(c.fg).font_weight(FontWeight::MEDIUM).child(text);
+        let quiet = |text: &'static str| div().text_color(c.fg_muted).child(text);
+        let dot = || div().text_color(c.fg_subtle).child("\u{00b7}");
+        let (trend, hue) = week_trend(summary.done_this_week, summary.done_last_week);
         div()
-            .grid()
-            .grid_cols(columns)
-            .gap_4()
-            .child(Self::stat_card(
-                "Finished this week",
-                IconName::CircleCheck,
-                summary.done_this_week.to_string(),
-                week_trend(summary.done_this_week, summary.done_last_week),
-                cx,
-            ))
-            .child(Self::stat_card(
-                "Study time this week",
-                IconName::Clock,
-                format!("{:.1} h", summary.hours_this_week),
-                ("Last 7 days".to_string(), Hue::Neutral),
-                cx,
-            ))
-            .child(Self::stat_card(
-                "Day streak",
-                IconName::Zap,
-                format!("{} {}", summary.streak_days, if summary.streak_days == 1 { "day" } else { "days" }),
-                streak_chip,
-                cx,
-            ))
+            .flex()
+            .flex_none()
+            .items_baseline()
+            .gap_1p5()
+            .text_size(px(13.))
+            .child(number(summary.done_this_week.to_string()))
+            .child(quiet("done this week"))
+            .when(hue == Hue::Success, |line| {
+                line.child(div().text_color(c.success).child(format!("({})", trend.replace(" vs last week", ""))))
+            })
+            .child(dot())
+            .child(number(format!("{:.1} h", summary.hours_this_week)))
+            .child(quiet("studied"))
+            .child(dot())
+            .child(number(format!("{}-day", summary.streak_days)))
+            .child(quiet("streak"))
             .into_any_element()
     }
 
-    /// The next step of the path opened most recently that still has work left.
+    /// The single most useful thing to do now, as the page's only card.
     fn render_up_next(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let store = self.store.read(cx);
         let mut candidates: Vec<&LearningPath> =
@@ -122,7 +103,7 @@ impl TodayView {
         let sub = path.topics[ti].subtopics[si].clone();
         let c = cx.theme().colors.clone();
         let (id, resume_id, store_handle) = (path.id.clone(), path.id.clone(), self.store.clone());
-        let label = if path.progress().0 == 0 { "Start" } else { "Up next" };
+        let label = if path.progress().0 == 0 { "Start here" } else { "Up next" };
         Some(
             GlassCard::new()
                 .child(
@@ -130,7 +111,6 @@ impl TodayView {
                         .flex()
                         .items_center()
                         .gap_4()
-                        .child(glass::avatar(&path, cx))
                         .child(
                             div()
                                 .flex_1()
@@ -141,24 +121,26 @@ impl TodayView {
                                 .child(glass::eyebrow(format!("{label} \u{00b7} {}.{}", ti + 1, si + 1), cx))
                                 .child(
                                     div()
-                                        .text_size(px(18.))
+                                        .text_size(px(19.))
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .text_ellipsis()
                                         .child(sub.name.clone()),
                                 )
-                                .child(Caption::new(format!("{} \u{00b7} {}", path.name, path.topics[ti].name))),
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_1p5()
+                                        .text_size(px(13.))
+                                        .text_color(c.fg_muted)
+                                        .child(format!("{} \u{00b7} {}", path.name, path.topics[ti].name))
+                                        .child(div().text_color(c.fg_subtle).child("\u{00b7}"))
+                                        .child(Icon::new(IconName::Clock).size(IconSize::Xs).color(c.fg_subtle))
+                                        .child(sub.estimated_time.clone()),
+                                ),
                         )
                         .child(
-                            div()
-                                .flex()
-                                .flex_none()
-                                .items_center()
-                                .gap_1()
-                                .child(Icon::new(IconName::Clock).size(IconSize::Xs).color(c.fg_subtle))
-                                .child(Caption::new(sub.estimated_time.clone())),
-                        )
-                        .child(
-                            glass::pill("up-next-done", "Mark done", None, PillStyle::Ghost, cx).on_click(
+                            glass::pill("up-next-done", "Mark done", None, PillStyle::Quiet, cx).on_click(
                                 move |_, _, cx| {
                                     store_handle.update(cx, |store, cx| store.toggle_done(&id, ti, si, cx));
                                 },
@@ -171,111 +153,73 @@ impl TodayView {
                                 })),
                         ),
                 )
-                .child(div().text_color(c.fg_muted).child(sub.description.clone()))
                 .into_any_element(),
         )
     }
 
-    fn render_row(ix: usize, path: &LearningPath, cx: &mut Context<Self>) -> AnyElement {
-        let c = cx.theme().colors.clone();
-        let mono = cx.theme().mono_family.clone();
-        let (done, total) = path.progress();
-        let next = path
-            .next_subtopic()
-            .map(|(ti, si)| format!("Next: {}.{} {}", ti + 1, si + 1, path.topics[ti].subtopics[si].name));
-        let id = path.id.clone();
-        let (hover_border, hover_bg) = (c.border_strong, c.fg.opacity(0.04));
+    /// A section's title line: name, quiet count, optional action.
+    fn section(title: &'static str, count: String, action: Option<AnyElement>, cx: &App) -> AnyElement {
         div()
-            .id(("today-row", ix))
             .flex()
-            .items_center()
-            .gap_3()
-            .px_4()
-            .py_3()
-            .rounded(px(14.))
-            .bg(glass::card_fill(cx, true))
-            .border_1()
-            .border_color(c.border)
-            .cursor_pointer()
-            .hover(move |s| s.border_color(hover_border).bg(hover_bg))
-            .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(TodayEvent::Open(id.clone()))))
-            .child(glass::avatar(path, cx))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(div().text_ellipsis().font_weight(FontWeight::MEDIUM).child(path.name.clone()))
-                    .children(next.map(Caption::new)),
-            )
-            .child(div().font_family(mono).text_color(c.fg).child(format!("{}%", percent(done, total))))
-            .child(glass::chip(Status::InProgress.label(), Status::InProgress.hue(), cx))
+            .flex_none()
+            .items_baseline()
+            .gap_2()
+            .px_3()
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
+            .child(div().text_size(px(12.)).text_color(cx.theme().colors.fg_subtle).child(count))
+            .child(div().flex_1())
+            .children(action)
             .into_any_element()
     }
 
-    fn render_in_progress(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let mut started: Vec<LearningPath> = self
-            .store
-            .read(cx)
-            .paths()
+    /// Every path as a flat list: in progress first, then not started, then
+    /// done, each most recently opened first.
+    fn render_paths(&self, cx: &mut Context<Self>) -> AnyElement {
+        let mut paths: Vec<LearningPath> = self.store.read(cx).paths().to_vec();
+        let rank = |p: &LearningPath| match status(p) {
+            Status::InProgress => 0,
+            Status::NotStarted => 1,
+            Status::Done => 2,
+        };
+        paths.sort_by_key(|p| (rank(p), std::cmp::Reverse(p.last_opened.unwrap_or(0))));
+        let rows: Vec<AnyElement> = paths
             .iter()
-            .filter(|p| status(p) == Status::InProgress)
-            .cloned()
-            .collect();
-        if started.is_empty() {
-            return None;
-        }
-        started.sort_by_key(|p| std::cmp::Reverse(p.last_opened.unwrap_or(0)));
-        let count = started.len();
-        let rows: Vec<AnyElement> = started
-            .iter()
-            .take(IN_PROGRESS_ROWS)
             .enumerate()
-            .map(|(ix, p)| Self::render_row(ix, p, cx))
+            .map(|(ix, path)| {
+                let id = path.id.clone();
+                let row = rows::path_row(("today-row", ix), SharedString::from(format!("today-row-{ix}")), path, cx)
+                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(TodayEvent::Open(id.clone()))));
+                rows::enter(row, format!("today-row-in-{}", path.id), ix + 1)
+            })
             .collect();
-        let c = cx.theme().colors.clone();
-        Some(
-            div()
-                .flex()
-                .flex_col()
-                .gap_3()
-                .child(
-                    div()
-                        .flex()
-                        .items_end()
-                        .child(
-                            div()
-                                .flex_1()
-                                .flex()
-                                .flex_col()
-                                .child(div().text_size(px(18.)).font_weight(FontWeight::SEMIBOLD).child("In progress"))
-                                .child(
-                                    div()
-                                        .text_color(c.fg_muted)
-                                        .child(format!("{count} path{}", if count == 1 { "" } else { "s" })),
-                                ),
-                        )
-                        .child(
-                            glass::pill("view-all", "View all", None, PillStyle::Ghost, cx)
-                                .on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(TodayEvent::ViewAll))),
-                        ),
-                )
-                .child(div().flex().flex_col().gap_2().children(rows))
-                .into_any_element(),
-        )
+        let view_all = glass::pill("view-all", "View all", None, PillStyle::Quiet, cx)
+            .h(px(26.))
+            .text_size(px(12.))
+            .on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(TodayEvent::ViewAll)))
+            .into_any_element();
+        div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(Self::section("Your paths", paths.len().to_string(), Some(view_all), cx))
+            .child(ScrollArea::new("today-paths").flex_1().min_h_0().child(div().flex().flex_col().children(rows)))
+            .into_any_element()
     }
 
-    fn render_activity(summary: &Summary, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// The last few completions, only when there are any.
+    fn render_recent(summary: &Summary, cx: &mut Context<Self>) -> Option<AnyElement> {
         if summary.recent.is_empty() {
             return None;
         }
         let c = cx.theme().colors.clone();
         let now = stats::now_secs();
-        let hover = c.hover;
-        let rows: Vec<_> = summary
+        let hover = glass::ink(cx, 0.05);
+        let rows: Vec<AnyElement> = summary
             .recent
             .iter()
+            .take(RECENT)
             .enumerate()
             .map(|(ix, done)| {
                 let (id, at) = (done.path_id.clone(), (done.topic, done.subtopic));
@@ -283,95 +227,109 @@ impl TodayView {
                     .id(("activity", ix))
                     .flex()
                     .items_center()
-                    .gap_2()
-                    .px_2()
-                    .py_1p5()
+                    .gap_3()
+                    .h(px(36.))
+                    .px_3()
                     .rounded(px(10.))
                     .cursor_pointer()
                     .hover(move |s| s.bg(hover))
+                    .active(|s| s.opacity(0.8))
                     .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(TodayEvent::Resume(id.clone(), at))))
                     .child(Icon::new(IconName::CircleCheck).size(IconSize::Sm).color(c.success))
                     .child(
                         div()
-                            .min_w_0()
+                            .flex_none()
+                            .max_w(px(360.))
                             .text_ellipsis()
+                            .text_size(px(13.))
                             .child(format!("{}.{} {}", done.topic + 1, done.subtopic + 1, done.name)),
                     )
-                    .child(Caption::new(done.path_name.clone()))
-                    .child(div().flex_1())
-                    .child(Caption::new(stats::ago(done.at, now)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_ellipsis()
+                            .text_size(px(12.))
+                            .text_color(c.fg_muted)
+                            .child(done.path_name.clone()),
+                    )
+                    .child(div().flex_none().text_size(px(12.)).text_color(c.fg_subtle).child(stats::ago(done.at, now)))
+                    .into_any_element()
             })
             .collect();
         Some(
             div()
                 .flex()
+                .flex_none()
                 .flex_col()
-                .gap_3()
-                .child(div().text_size(px(18.)).font_weight(FontWeight::SEMIBOLD).child("Recent activity"))
-                .child(GlassCard::new().dense().children(rows))
+                .gap_1()
+                .child(Self::section("Recently finished", String::new(), None, cx))
+                .children(rows)
                 .into_any_element(),
         )
     }
 }
 
 impl Render for TodayView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let paths: Vec<LearningPath> = self.store.read(cx).paths().to_vec();
         let (greeting, date) = Self::greeting();
         let name = cx.global::<crate::settings::Settings>().name.trim().to_string();
         let greeting = if name.is_empty() { greeting.to_string() } else { format!("{greeting}, {name}") };
         let c = cx.theme().colors.clone();
-        let heading = div()
+        let mut column = div()
+            .w_full()
+            .max_w(px(COLUMN))
+            .h_full()
             .flex()
             .flex_col()
-            .gap_1()
-            .child(div().text_size(px(32.)).font_weight(FontWeight::MEDIUM).child(greeting))
-            .child(div().text_color(c.fg_muted).child(date))
-            .into_any_element();
-        let mut content = vec![heading];
+            .gap_5()
+            .px_6()
+            .pt_2()
+            .pb_5();
+
         if paths.is_empty() {
-            content.push(
-                GlassCard::new()
-                    .child(glass::badge(IconName::BookOpen, cx))
-                    .child(
-                        div()
-                            .text_size(px(18.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Start your first learning path"),
-                    )
-                    .child(
-                        div()
-                            .text_color(c.fg_muted)
-                            .child("Name a topic and Nuevette maps it from the official docs, step by step."),
-                    )
-                    .child(div().flex().child(
-                        glass::pill("first-path", "New path", Some(IconName::Plus), PillStyle::Primary, cx)
-                            .on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(TodayEvent::NewPath))),
-                    ))
-                    .into_any_element(),
-            );
+            column = column
+                .child(
+                    div()
+                        .flex()
+                        .items_baseline()
+                        .gap_3()
+                        .child(div().text_size(px(22.)).font_weight(FontWeight::SEMIBOLD).child(greeting))
+                        .child(div().text_size(px(13.)).text_color(c.fg_muted).child(date)),
+                )
+                .child(rows::enter(
+                    GlassCard::new()
+                        .child(div().text_size(px(18.)).font_weight(FontWeight::SEMIBOLD).child("Start your first learning path"))
+                        .child(
+                            div()
+                                .text_color(c.fg_muted)
+                                .child("Name a topic and Nuevette maps it from the official docs, step by step."),
+                        )
+                        .child(div().flex().child(
+                            glass::pill("first-path", "New path", Some(IconName::Plus), PillStyle::Primary, cx)
+                                .on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(TodayEvent::NewPath))),
+                        )),
+                    "today-empty-in",
+                    0,
+                ));
         } else {
             let summary = stats::summarize(&paths, stats::now_secs(), &TimeZone::system());
-            let columns = if f32::from(window.viewport_size().width) < WIDE_WINDOW { 2 } else { 3 };
-            content.push(Self::render_stats(&summary, columns, cx));
-            content.extend(self.render_up_next(cx));
-            content.extend(self.render_in_progress(cx));
-            content.extend(Self::render_activity(&summary, cx));
+            let heading = div()
+                .flex()
+                .flex_none()
+                .items_baseline()
+                .gap_3()
+                .child(div().text_size(px(22.)).font_weight(FontWeight::SEMIBOLD).child(greeting))
+                .child(div().text_size(px(13.)).text_color(c.fg_subtle).child(date))
+                .child(div().flex_1())
+                .child(Self::week_line(&summary, cx));
+            let up_next = self.render_up_next(cx).map(|card| rows::enter(card, "today-up-next-in", 0));
+            let list = self.render_paths(cx);
+            let recent = Self::render_recent(&summary, cx);
+            column = column.child(heading).children(up_next).child(list).children(recent);
         }
-        ScrollArea::new("today").size_full().child(
-            div().flex().justify_center().child(
-                div()
-                    .w_full()
-                    .max_w(px(1040.))
-                    .px_10()
-                    .pt_8()
-                    .pb_16()
-                    .flex()
-                    .flex_col()
-                    .gap_8()
-                    .children(content),
-            ),
-        )
+        div().size_full().flex().justify_center().child(column)
     }
 }
 

@@ -2,19 +2,18 @@
 //! It does what the old sidebar did: open, and delete with undo.
 
 use ely_gpui_component::layout::ScrollArea;
-use ely_gpui_component::motion::ProgressRing;
 use ely_gpui_component::primitives::IconName;
 use ely_gpui_component::theme::ActiveTheme;
 use ely_gpui_component::typography::Caption;
 use gpui::{
     ClickEvent, Context, Entity, EventEmitter, FontWeight, IntoElement, MouseButton, Render, Subscription,
-    Window, div, prelude::*, px, rems,
+    Window, div, prelude::*, px, AnyElement, SharedString,
 };
 
 use crate::model::LearningPath;
-use crate::stats;
 use crate::store::PathStore;
-use crate::ui::glass::{self, Hue, PillStyle};
+use crate::ui::glass::{self, PillStyle};
+use crate::ui::rows;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Status {
@@ -29,14 +28,6 @@ impl Status {
             Status::NotStarted => "Not started",
             Status::InProgress => "In progress",
             Status::Done => "Done",
-        }
-    }
-
-    pub fn hue(self) -> Hue {
-        match self {
-            Status::NotStarted => Hue::Neutral,
-            Status::InProgress => Hue::Accent,
-            Status::Done => Hue::Success,
         }
     }
 }
@@ -101,8 +92,6 @@ pub enum PathsEvent {
 pub struct PathsView {
     store: Entity<PathStore>,
     filter: Filter,
-    /// The row under the pointer, which shows its delete button.
-    hovered: Option<usize>,
     _store_sub: Subscription,
 }
 
@@ -111,85 +100,29 @@ impl EventEmitter<PathsEvent> for PathsView {}
 impl PathsView {
     pub fn new(store: Entity<PathStore>, cx: &mut Context<Self>) -> Self {
         let _store_sub = cx.observe(&store, |_, _, cx| cx.notify());
-        Self { store, filter: Filter::All, hovered: None, _store_sub }
+        Self { store, filter: Filter::All, _store_sub }
     }
 
-    fn render_row(&self, ix: usize, path: &LearningPath, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let c = cx.theme().colors.clone();
-        let mono = cx.theme().mono_family.clone();
-        let (done, total) = path.progress();
-        let state = status(path);
-        let leading = if state == Status::InProgress {
-            div()
-                .size(px(36.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(ProgressRing::new(("paths-ring", ix), done as f32 / total.max(1) as f32).size(rems(1.875)))
-                .into_any_element()
-        } else {
-            glass::avatar(path, cx).into_any_element()
-        };
-        let opened = path.last_opened.map(|at| stats::ago(at, stats::now_secs()));
+    /// A flat row; its delete button shows while the row is hovered.
+    fn render_row(&self, ix: usize, path: &LearningPath, cx: &mut Context<Self>) -> AnyElement {
+        let group = SharedString::from(format!("paths-row-{ix}"));
         let (open_id, delete_id) = (path.id.clone(), path.id.clone());
-        let delete = (self.hovered == Some(ix)).then(|| {
-            div()
-                // The row must not also take this press.
-                .on_mouse_down(MouseButton::Left, |_, window, cx| {
-                    window.prevent_default();
-                    cx.stop_propagation();
-                })
-                .child(
-                    glass::icon_button(("paths-delete", ix), IconName::Trash2, "Delete path", cx)
-                        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-                            cx.emit(PathsEvent::Delete(delete_id.clone()))
-                        })),
-                )
-        });
-        let (hover_border, hover_bg) = (c.border_strong, c.fg.opacity(0.04));
-        div()
-            .id(("paths-row", ix))
-            .flex()
-            .items_center()
-            .gap_3()
-            .px_4()
-            .py_3()
-            .rounded(px(14.))
-            .bg(glass::card_fill(cx, true))
-            .border_1()
-            .border_color(c.border)
-            .cursor_pointer()
-            .hover(move |s| s.border_color(hover_border).bg(hover_bg))
-            .on_hover(cx.listener(move |this, hovering: &bool, _, cx| {
-                let next = if *hovering { Some(ix) } else { this.hovered.filter(|h| *h != ix) };
-                if this.hovered != next {
-                    this.hovered = next;
-                    cx.notify();
-                }
-            }))
+        let delete = div()
+            .invisible()
+            .group_hover(group.clone(), |s| s.visible())
+            // The row must not also take this press.
+            .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                window.prevent_default();
+                cx.stop_propagation();
+            })
+            .child(
+                glass::icon_button(("paths-delete", ix), IconName::Trash2, "Delete path", cx)
+                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(PathsEvent::Delete(delete_id.clone())))),
+            );
+        let row = rows::path_row(("paths-row", ix), group, path, cx)
             .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(PathsEvent::Open(open_id.clone()))))
-            .child(leading)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(div().text_ellipsis().font_weight(FontWeight::MEDIUM).child(path.name.clone()))
-                    .child(Caption::new(format!("{} topics \u{00b7} {}", path.topics.len(), path.estimated_time))),
-            )
-            .children(opened.map(Caption::new))
-            .child(
-                div()
-                    .w(px(44.))
-                    .flex()
-                    .justify_end()
-                    .font_family(mono)
-                    .text_color(c.fg)
-                    .child(format!("{}%", percent(done, total))),
-            )
-            .child(glass::chip(state.label(), state.hue(), cx))
-            .children(delete)
+            .child(delete);
+        rows::enter(row, format!("paths-row-in-{}-{:?}", path.id, self.filter), ix)
     }
 }
 
@@ -198,13 +131,12 @@ impl Render for PathsView {
         let paths: Vec<LearningPath> = self.store.read(cx).paths().to_vec();
         let shown: Vec<LearningPath> = visible(&paths, self.filter).into_iter().cloned().collect();
         let rows: Vec<_> =
-            shown.iter().enumerate().map(|(ix, p)| self.render_row(ix, p, cx).into_any_element()).collect();
+            shown.iter().enumerate().map(|(ix, p)| self.render_row(ix, p, cx)).collect();
         let filters = Filter::ALL.map(|filter| {
-            let style = if filter == self.filter { PillStyle::Selected } else { PillStyle::Ghost };
+            let style = if filter == self.filter { PillStyle::Selected } else { PillStyle::Quiet };
             glass::pill(("paths-filter", filter as usize), filter.label(), None, style, cx).on_click(cx.listener(
                 move |this, _: &ClickEvent, _, cx| {
                     this.filter = filter;
-                    this.hovered = None;
                     cx.notify();
                 },
             ))
@@ -217,45 +149,47 @@ impl Render for PathsView {
                 "Nothing here for this filter."
             }))
         });
-        ScrollArea::new("paths").size_full().child(
-            div().flex().justify_center().child(
+        let count = paths.len();
+        // The same reading column as Today, so names and status stay close.
+        let column = div()
+            .w_full()
+            .max_w(px(900.))
+            .h_full()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .px_6()
+            .pt_2()
+            .pb_5()
+            .child(
                 div()
-                    .w_full()
-                    .max_w(px(1040.))
-                    .px_10()
-                    .pt_8()
-                    .pb_16()
                     .flex()
-                    .flex_col()
-                    .gap_5()
+                    .flex_none()
+                    .items_center()
+                    .gap_3()
+                    .child(div().text_size(px(22.)).font_weight(FontWeight::SEMIBOLD).child("Paths"))
                     .child(
                         div()
-                            .flex()
-                            .items_end()
-                            .gap_3()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_1()
-                                    .child(div().text_size(px(32.)).font_weight(FontWeight::MEDIUM).child("Paths"))
-                                    .child(div().text_color(c.fg_muted).child(format!(
-                                        "{} learning path{}",
-                                        paths.len(),
-                                        if paths.len() == 1 { "" } else { "s" }
-                                    ))),
-                            )
-                            .child(
-                                glass::pill("paths-new", "New path", Some(IconName::Plus), PillStyle::Primary, cx)
-                                    .on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(PathsEvent::NewPath))),
-                            ),
+                            .text_size(px(13.))
+                            .text_color(c.fg_muted)
+                            .child(format!("{count} learning path{}", if count == 1 { "" } else { "s" })),
                     )
-                    .child(div().flex().gap_2().children(filters))
-                    .children(empty)
-                    .child(div().flex().flex_col().gap_2().children(rows)),
-            ),
-        )
+                    .child(div().w_2())
+                    .child(div().flex().gap_1p5().children(filters))
+                    .child(div().flex_1())
+                    .child(
+                        glass::pill("paths-new", "New path", Some(IconName::Plus), PillStyle::Primary, cx)
+                            .on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(PathsEvent::NewPath))),
+                    ),
+            )
+            .children(empty)
+            .child(
+                ScrollArea::new("paths-list")
+                    .flex_1()
+                    .min_h_0()
+                    .child(div().flex().flex_col().pb_1().children(rows)),
+            );
+        div().size_full().flex().justify_center().child(column)
     }
 }
 

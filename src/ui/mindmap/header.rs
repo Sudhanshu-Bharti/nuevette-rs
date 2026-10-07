@@ -130,7 +130,10 @@ impl MindMapView {
                     )
             })
             .when(self.path.building.is_none(), |row| {
-                row.child(div().w_32().child(glass::meter(done as f32 / total.max(1) as f32, cx)))
+                // Eases forward a step's worth each time one is marked done.
+                let share = done as f32 / total.max(1) as f32;
+                let from = if done > 0 { (done - 1) as f32 / total.max(1) as f32 } else { share };
+                row.child(div().w_32().child(glass::meter_easing(format!("path-progress-{done}"), from, share, cx)))
                     .child(Caption::new(format!("{done} of {total} done")).font_family(mono.clone()))
             })
             .child(div().w_px().h_4().bg(c.border))

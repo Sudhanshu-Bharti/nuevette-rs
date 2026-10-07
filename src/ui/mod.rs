@@ -5,6 +5,7 @@ pub mod mindmap;
 pub mod nav;
 pub mod palette;
 pub mod paths;
+pub mod rows;
 pub mod settings_view;
 pub mod titlebar;
 pub mod today;
