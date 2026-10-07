@@ -542,7 +542,7 @@ impl Render for MindMapView {
                     .left_0()
                     .size_full()
                     // Under the edges and cards, dimmer than elsewhere.
-                    .child(glass::glow(0.45))
+                    .child(glass::glow(0.45, cx))
                     .child(painted)
                     .children(halos)
                     .children(cards),

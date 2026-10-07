@@ -106,6 +106,25 @@ impl PathStore {
         cx.notify();
     }
 
+    /// Removes every path, returning them so they can be restored.
+    pub fn clear(&mut self, cx: &mut Context<Self>) -> Vec<LearningPath> {
+        let paths = std::mem::take(&mut self.paths);
+        self.save();
+        cx.notify();
+        paths
+    }
+
+    /// Puts back paths returned by [`Self::clear`], ahead of any added since.
+    pub fn restore_all(&mut self, paths: Vec<LearningPath>, cx: &mut Context<Self>) {
+        let added = std::mem::take(&mut self.paths);
+        self.paths = paths;
+        for path in added.into_iter().rev() {
+            upsert_recent(&mut self.paths, path);
+        }
+        self.save();
+        cx.notify();
+    }
+
     /// Applies `edit` to the path with `id`, then saves and notifies.
     /// Returns false when no such path exists.
     pub fn update_path(

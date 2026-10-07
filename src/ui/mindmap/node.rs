@@ -16,7 +16,7 @@ use gpui::{
 
 use super::MindMapView;
 use super::layout::{NodeKind, node_key};
-use crate::theme::blend;
+use crate::ui::glass;
 
 /// Below this zoom, cards drop descriptions and concept pills.
 const COMPACT_ZOOM: f32 = 0.55;
@@ -58,7 +58,8 @@ impl MindMapView {
             NodeKind::Topic(_) => (c.accent, 0.08),
             NodeKind::Subtopic(..) => (c.fg_muted, 0.),
         };
-        let fill = blend(c.surface, c.fg, 0.035);
+        let fill = glass::solid_fill(cx);
+        let (shade_rest, shade_lift) = (glass::shade(cx, 0.4), glass::shade(cx, 0.55));
         let border = match (selected, done, up_next, node.kind) {
             (true, ..) => c.accent,
             (false, true, ..) => c.success.opacity(0.45),
@@ -156,7 +157,7 @@ impl MindMapView {
         };
 
         let resting_shadow = BoxShadow {
-            color: gpui::black().opacity(0.4),
+            color: shade_rest,
             offset: point(px(0.), s(6.)),
             blur_radius: s(18.),
             spread_radius: px(0.),
@@ -164,7 +165,7 @@ impl MindMapView {
         };
         // Hover lifts the card: a deeper, softer shadow and a brighter edge.
         let lifted_shadow = BoxShadow {
-            color: gpui::black().opacity(0.55),
+            color: shade_lift,
             offset: point(px(0.), s(12.)),
             blur_radius: s(30.),
             spread_radius: px(0.),

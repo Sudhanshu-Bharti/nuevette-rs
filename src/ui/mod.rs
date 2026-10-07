@@ -4,5 +4,6 @@ pub mod glass;
 pub mod mindmap;
 pub mod nav;
 pub mod paths;
+pub mod settings_view;
 pub mod titlebar;
 pub mod today;

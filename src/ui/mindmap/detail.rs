@@ -21,7 +21,7 @@ use crate::ui::glass::{self, PillStyle};
 impl MindMapView {
     pub(super) fn render_inspector(&self, ix: usize, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         // Opaque, so the cards it floats over never show through.
-        let fill = crate::theme::blend(cx.theme().colors.surface, cx.theme().colors.fg, 0.03);
+        let fill = glass::solid_fill(cx);
         let theme = cx.theme();
         let c = theme.colors.clone();
         let mono = theme.mono_family.clone();
@@ -230,7 +230,7 @@ impl MindMapView {
             .border_1()
             .border_color(c.fg.opacity(0.1))
             .shadow(vec![gpui::BoxShadow {
-                color: gpui::black().opacity(0.5),
+                color: glass::shade(cx, 0.5),
                 offset: gpui::point(px(0.), px(16.)),
                 blur_radius: px(40.),
                 spread_radius: px(0.),

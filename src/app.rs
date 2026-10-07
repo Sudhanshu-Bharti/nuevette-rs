@@ -341,7 +341,7 @@ impl Render for NuevetteApp {
             .text_size(theme.text_size(TextSize::Base))
             .text_color(theme.colors.fg)
             .bg(theme.colors.bg)
-            .child(glass::glow(1.))
+            .child(glass::glow(1., cx))
             .child(
                 div()
                     .key_context("Nuevette")

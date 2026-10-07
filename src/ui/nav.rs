@@ -1,5 +1,6 @@
 //! The wordmark and the pill nav in the title bar. The active screen shows
-//! as a labelled pill; the rest are round icon buttons with tooltips.
+//! as a labelled pill; the rest are round icon buttons with tooltips. After
+//! them: the light/dark toggle and the profile avatar, which opens Settings.
 
 use std::rc::Rc;
 
@@ -15,9 +16,13 @@ pub enum NavItem {
     NewPath,
     Paths,
     Search,
+    /// Flips between light and dark.
+    Theme,
+    Settings,
 }
 
 impl NavItem {
+    /// The screens and search, in the pill group.
     pub const ALL: [NavItem; 4] = [NavItem::Today, NavItem::NewPath, NavItem::Paths, NavItem::Search];
 
     pub fn label(self) -> &'static str {
@@ -26,6 +31,8 @@ impl NavItem {
             NavItem::NewPath => "New path",
             NavItem::Paths => "Paths",
             NavItem::Search => "Search",
+            NavItem::Theme => "Theme",
+            NavItem::Settings => "Settings",
         }
     }
 
@@ -35,6 +42,8 @@ impl NavItem {
             NavItem::NewPath => IconName::Plus,
             NavItem::Paths => IconName::Layers,
             NavItem::Search => IconName::Search,
+            NavItem::Theme => IconName::Sun,
+            NavItem::Settings => IconName::Settings,
         }
     }
 
@@ -76,11 +85,47 @@ pub fn brand(cx: &App) -> AnyElement {
 
 pub fn pill_nav(
     active: Option<NavItem>,
+    initial: Option<char>,
     on_select: impl Fn(NavItem, &mut Window, &mut App) + 'static,
     cx: &App,
 ) -> AnyElement {
     let on_select = Rc::new(on_select);
     let c = &cx.theme().colors;
+    let dark = cx.theme().is_dark();
+    let theme_toggle = {
+        let handler = on_select.clone();
+        let (icon, tip) = if dark { (IconName::Sun, "Light mode") } else { (IconName::Moon, "Dark mode") };
+        glass::round_icon("nav-theme", icon, cx)
+            .tooltip(Tooltip::text(tip))
+            .on_click(move |_, window, cx| handler(NavItem::Theme, window, cx))
+    };
+    let avatar = {
+        let handler = on_select.clone();
+        let settings_open = active == Some(NavItem::Settings);
+        let ring = if settings_open { c.accent } else { c.border_strong };
+        div()
+            .id("nav-settings")
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .size(px(32.))
+            .rounded_full()
+            .bg(c.accent.opacity(if settings_open { 0.24 } else { 0.14 }))
+            .border_1()
+            .border_color(ring)
+            .text_size(px(13.))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(c.accent)
+            .cursor_pointer()
+            .hover(|s| s.bg(c.accent.opacity(0.22)))
+            .tooltip(Tooltip::text("Settings"))
+            .map(|avatar| match initial {
+                Some(letter) => avatar.child(letter.to_string()),
+                None => avatar.child(Icon::new(IconName::User).size(IconSize::Sm).color(c.accent)),
+            })
+            .on_click(move |_, window, cx| handler(NavItem::Settings, window, cx))
+    };
     div()
         .flex()
         .items_center()
@@ -104,6 +149,9 @@ pub fn pill_nav(
             };
             button.on_click(move |_, window, cx| handler(item, window, cx))
         }))
+        .child(div().w_px().h(px(18.)).mx_1().bg(c.border_strong))
+        .child(theme_toggle)
+        .child(avatar)
         .into_any_element()
 }
 

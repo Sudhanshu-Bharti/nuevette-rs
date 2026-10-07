@@ -34,7 +34,7 @@ const SUGGESTIONS: &[&str] = &[
     "Kubernetes basics",
 ];
 /// Pace choices, in hours per week ("any" = no budget).
-const PACES: &[(&str, &str)] = &[("any", "Any pace"), ("3", "3 h/wk"), ("5", "5 h/wk"), ("10", "10 h/wk")];
+pub const PACES: &[(&str, &str)] = &[("any", "Any pace"), ("3", "3 h/wk"), ("5", "5 h/wk"), ("10", "10 h/wk")];
 
 pub enum ComposerEvent {
     /// The path as the map first shows it: the reviewed topics, no detail yet.

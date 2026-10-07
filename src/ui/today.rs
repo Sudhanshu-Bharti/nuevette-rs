@@ -193,7 +193,7 @@ impl TodayView {
             .px_4()
             .py_3()
             .rounded(px(14.))
-            .bg(c.fg.opacity(0.025))
+            .bg(glass::card_fill(cx, true))
             .border_1()
             .border_color(c.border)
             .cursor_pointer()
