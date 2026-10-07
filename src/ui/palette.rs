@@ -22,11 +22,18 @@ pub struct Command {
     pub icon: IconName,
     /// Shortcut keycaps, e.g. ["Ctrl", "N"].
     pub keys: Vec<&'static str>,
+    /// Quiet context after the label: the path a step is in, a path's progress.
+    pub detail: Option<SharedString>,
 }
 
 impl Command {
     pub fn new(value: impl Into<SharedString>, label: impl Into<SharedString>, icon: IconName) -> Self {
-        Self { value: value.into(), label: label.into(), icon, keys: Vec::new() }
+        Self { value: value.into(), label: label.into(), icon, keys: Vec::new(), detail: None }
+    }
+
+    pub fn detail(mut self, detail: impl Into<SharedString>) -> Self {
+        self.detail = Some(detail.into());
+        self
     }
 
     pub fn keys(mut self, keys: &[&'static str]) -> Self {
@@ -46,7 +53,10 @@ pub enum PaletteEvent {
 }
 
 pub struct PaletteView {
-    groups: Vec<Group>,
+    /// Shown before anything is typed.
+    suggested: Vec<Group>,
+    /// Searched once something is typed: every action, path and step.
+    search: Vec<Group>,
     query: Entity<TextInput>,
     /// Index into the filtered, flattened list.
     selected: usize,
@@ -68,8 +78,8 @@ fn matches(label: &str, query: &str) -> bool {
 }
 
 impl PaletteView {
-    pub fn new(groups: Vec<Group>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let query = cx.new(|cx| TextInput::new(window, cx).placeholder("Search commands, paths and steps"));
+    pub fn new(suggested: Vec<Group>, search: Vec<Group>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let query = cx.new(|cx| TextInput::new(window, cx).placeholder("Search actions, paths and every step"));
         let _subscription = cx.subscribe(&query, |this, _, event: &InputEvent, cx| match event {
             InputEvent::Changed => {
                 this.selected = 0;
@@ -79,17 +89,33 @@ impl PaletteView {
             _ => {}
         });
         query.read(cx).focus_handle(cx).focus(window, cx);
-        Self { groups, query, selected: 0, _subscription }
+        Self { suggested, search, query, selected: 0, _subscription }
     }
 
-    /// The groups with only their matching commands, empty groups dropped.
+    /// Suggestions while the query is empty; otherwise every group with only
+    /// its matching commands (label or detail), empty groups dropped.
     fn filtered(&self, cx: &App) -> Vec<(SharedString, Vec<Command>)> {
-        let query = self.query.read(cx).text().to_string();
-        self.groups
+        const PER_GROUP: usize = 40;
+        let query = self.query.read(cx).text().trim().to_string();
+        if query.is_empty() {
+            return self.suggested.iter().map(|g| (g.title.clone(), g.commands.clone())).collect();
+        }
+        self.search
             .iter()
             .map(|group| {
-                let commands: Vec<Command> =
-                    group.commands.iter().filter(|c| matches(&c.label, &query)).cloned().collect();
+                let commands: Vec<Command> = group
+                    .commands
+                    .iter()
+                    .filter(|c| {
+                        let haystack = match &c.detail {
+                            Some(detail) => format!("{} {detail}", c.label),
+                            None => c.label.to_string(),
+                        };
+                        matches(&haystack, &query)
+                    })
+                    .take(PER_GROUP)
+                    .cloned()
+                    .collect();
                 (group.title.clone(), commands)
             })
             .filter(|(_, commands)| !commands.is_empty())
@@ -186,7 +212,23 @@ impl Render for PaletteView {
                         } else {
                             c.fg_muted
                         }))
-                        .child(div().flex_1().min_w_0().text_ellipsis().child(command.label.clone()))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .items_baseline()
+                                .gap_2()
+                                .child(div().flex_none().max_w(px(340.)).text_ellipsis().child(command.label.clone()))
+                                .children(command.detail.clone().map(|detail| {
+                                    div()
+                                        .min_w_0()
+                                        .text_ellipsis()
+                                        .text_size(px(12.))
+                                        .text_color(c.fg_subtle)
+                                        .child(detail)
+                                })),
+                        )
                         .children(command.keys.iter().map(|key| Self::keycap(key, cx)))
                         .into_any_element(),
                 );

@@ -13,6 +13,7 @@ use gpui::{
 
 use crate::actions::{NewPath, OpenPalette};
 use crate::config::Config;
+use crate::model::LearningPath;
 use crate::store::PathStore;
 use crate::ui::composer::{ComposerEvent, ComposerView};
 use crate::ui::today::{TodayEvent, TodayView};
@@ -262,15 +263,22 @@ impl NuevetteApp {
             ("action", "fit", Some(map)) => map.update(cx, |map, cx| map.fit(cx)),
             ("action", "export", Some(map)) => map.update(cx, |map, cx| map.export(cx)),
             ("path", id, _) => self.open_path(id, window, cx),
-            ("topic", t, Some(map)) => {
-                if let Ok(t) = t.parse() {
-                    map.update(cx, |map, cx| map.select_topic(t, cx));
+            // A topic ("goto:<path>:<t>") or a step ("goto:<path>:<t>.<s>") in
+            // any path: open that path if needed, then select it.
+            ("goto", target, _) => {
+                let Some((id, place)) = target.rsplit_once(':') else {
+                    return;
+                };
+                if self.mindmap.as_ref().is_none_or(|(open, _)| open != id) {
+                    self.open_path(id, window, cx);
                 }
-            }
-            ("sub", ts, Some(map)) => {
-                let parsed = ts.split_once('.').and_then(|(t, s)| Some((t.parse().ok()?, s.parse().ok()?)));
-                if let Some((t, s)) = parsed {
-                    map.update(cx, |map, cx| map.select_subtopic(t, s, cx));
+                if let Some((_, map)) = &self.mindmap {
+                    let step = place.split_once('.').and_then(|(t, s)| Some((t.parse().ok()?, s.parse().ok()?)));
+                    match (step, place.parse()) {
+                        (Some((t, s)), _) => map.update(cx, |map, cx| map.select_subtopic(t, s, cx)),
+                        (None, Ok(t)) => map.update(cx, |map, cx| map.select_topic(t, cx)),
+                        _ => {}
+                    }
                 }
             }
             _ => {}
@@ -278,10 +286,7 @@ impl NuevetteApp {
         cx.notify();
     }
 
-    /// The palette's commands: actions, the open path's steps, every path.
-    fn palette_groups(&self, cx: &App) -> Vec<Group> {
-        let store = self.store.read(cx);
-        let open = self.mindmap.as_ref().and_then(|(id, _)| store.get(id));
+    fn palette_actions(&self, cx: &App) -> Vec<Command> {
         let dark = cx.theme().is_dark();
         let mut actions = vec![
             Command::new("action:new", "New path", IconName::Plus).keys(&["Ctrl", "N"]),
@@ -294,37 +299,105 @@ impl NuevetteApp {
                 if dark { IconName::Sun } else { IconName::Moon },
             ),
         ];
-        if open.is_some() {
+        if self.mindmap.is_some() {
             actions.push(Command::new("action:fit", "Fit the map", IconName::Maximize2).keys(&["Ctrl", "0"]));
             actions.push(Command::new("action:export", "Export as Markdown", IconName::Download));
         }
-        let mut groups = vec![Group { title: "Actions".into(), commands: actions }];
-        if let Some(path) = open {
-            let mut steps = Vec::new();
-            for (t, topic) in path.topics.iter().enumerate() {
-                steps.push(Command::new(format!("topic:{t}"), format!("{}. {}", t + 1, topic.name), IconName::Layers));
-                for (s, sub) in topic.subtopics.iter().enumerate() {
-                    let icon = if path.is_done(t, s) { IconName::CircleCheck } else { IconName::BookOpen };
-                    steps.push(Command::new(format!("sub:{t}.{s}"), format!("{}.{} {}", t + 1, s + 1, sub.name), icon));
-                }
+        actions
+    }
+
+    /// One path as a palette row, with its progress beside it.
+    fn path_command(path: &LearningPath) -> Command {
+        let (done, total) = path.progress();
+        Command::new(format!("path:{}", path.id), path.name.clone(), IconName::BookOpen)
+            .detail(format!("{done} of {total} done"))
+    }
+
+    /// Every topic and step of a path, each naming the path it is in.
+    fn step_commands(path: &LearningPath) -> Vec<Command> {
+        let mut steps = Vec::new();
+        for (t, topic) in path.topics.iter().enumerate() {
+            steps.push(
+                Command::new(format!("goto:{}:{t}", path.id), format!("{}. {}", t + 1, topic.name), IconName::Layers)
+                    .detail(path.name.clone()),
+            );
+            for (s, sub) in topic.subtopics.iter().enumerate() {
+                let icon = if path.is_done(t, s) { IconName::CircleCheck } else { IconName::BookOpen };
+                steps.push(
+                    Command::new(
+                        format!("goto:{}:{t}.{s}", path.id),
+                        format!("{}.{} {}", t + 1, s + 1, sub.name),
+                        icon,
+                    )
+                    .detail(path.name.clone()),
+                );
             }
-            groups.push(Group { title: format!("In \u{201c}{}\u{201d}", path.name).into(), commands: steps });
         }
-        let paths = store
-            .paths()
+        steps
+    }
+
+    /// What the palette shows before anything is typed (suggestions), and
+    /// what it searches once something is (everything).
+    fn palette_groups(&self, cx: &App) -> (Vec<Group>, Vec<Group>) {
+        let store = self.store.read(cx);
+        let open = self.mindmap.as_ref().and_then(|(id, _)| store.get(id));
+        let mut recent: Vec<&LearningPath> = store.paths().iter().collect();
+        recent.sort_by_key(|p| std::cmp::Reverse(p.last_opened.unwrap_or(0)));
+
+        let continue_steps: Vec<Command> = recent
             .iter()
-            .map(|p| Command::new(format!("path:{}", p.id), p.name.clone(), IconName::BookOpen))
+            .filter_map(|path| {
+                let (t, s) = path.next_subtopic()?;
+                Some(
+                    Command::new(
+                        format!("goto:{}:{t}.{s}", path.id),
+                        format!("{}.{} {}", t + 1, s + 1, path.topics[t].subtopics[s].name),
+                        IconName::ArrowRight,
+                    )
+                    .detail(path.name.clone()),
+                )
+            })
+            .take(3)
             .collect();
-        groups.push(Group { title: "Paths".into(), commands: paths });
-        groups
+
+        let mut suggested = Vec::new();
+        if !continue_steps.is_empty() {
+            suggested.push(Group { title: "Continue".into(), commands: continue_steps });
+        }
+        suggested.push(Group { title: "Actions".into(), commands: self.palette_actions(cx) });
+        if let Some(path) = open {
+            suggested.push(Group {
+                title: format!("In \u{201c}{}\u{201d}", path.name).into(),
+                commands: Self::step_commands(path),
+            });
+        }
+        suggested.push(Group {
+            title: "Recent paths".into(),
+            commands: recent.iter().take(5).map(|p| Self::path_command(p)).collect(),
+        });
+
+        let search = vec![
+            Group { title: "Actions".into(), commands: self.palette_actions(cx) },
+            Group { title: "Paths".into(), commands: recent.iter().map(|p| Self::path_command(p)).collect() },
+            Group {
+                title: "Steps".into(),
+                // The open path's steps first, then the rest by recency.
+                commands: open
+                    .into_iter()
+                    .chain(recent.iter().copied().filter(|p| Some(p.id.as_str()) != open.map(|o| o.id.as_str())))
+                    .flat_map(Self::step_commands)
+                    .collect(),
+            },
+        ];
+        (suggested, search)
     }
 
     fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.palette.is_some() {
             return;
         }
-        let groups = self.palette_groups(cx);
-        let palette = cx.new(|cx| PaletteView::new(groups, window, cx));
+        let (suggested, search) = self.palette_groups(cx);
+        let palette = cx.new(|cx| PaletteView::new(suggested, search, window, cx));
         self._palette_sub = Some(cx.subscribe_in(&palette, window, |this, _, event, window, cx| match event {
             PaletteEvent::Run(value) => {
                 let value = value.to_string();
