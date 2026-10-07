@@ -1,0 +1,33 @@
+[package]
+name = "nuevette"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Ely requires GPUI from Zed's repository at exactly this revision; any other
+# revision builds a second gpui whose types don't match Ely's.
+ely-gpui-component = { git = "https://github.com/ZacharyZhang-NY/Ely-GPUI-Components" }
+gpui = { git = "https://github.com/zed-industries/zed", rev = "1a28cff4b409169bac058bca40dfbfeb7621d19b" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "1a28cff4b409169bac058bca40dfbfeb7621d19b", features = ["font-kit"] }
+anyhow = "1.0.104"
+dirs = "7.0.0"
+dotenvy = "0.15.7"
+scraper = "0.27.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+unicode-segmentation = "1.13.3"
+ureq = { version = "3.4.2", features = ["json"] }
+uuid = { version = "1.27.0", features = ["v4"] }
+url = "2.5.8"
+jiff = "0.2"
+futures = "0.3"
+
+# GPUI is far too slow unoptimized: build every dependency with full
+# optimizations even in dev, and our own code lightly, so panning and zooming
+# stay smooth while our rebuilds stay quick. Debug assertions stay on, so
+# gpui_windows keeps compiling shaders at runtime (no Windows SDK needed).
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

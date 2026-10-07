@@ -1,0 +1,319 @@
+[
+  {
+    "id": "sample-rust-async",
+    "name": "Rust Async Programming",
+    "description": "From futures and the poll model to building concurrent network services with Tokio.",
+    "estimatedTime": "~28 hours",
+    "topics": [
+      {
+        "name": "Foundations",
+        "description": "Why async exists and how Rust models it without a runtime in the language.",
+        "estimatedTime": "~5 hours",
+        "subtopics": [
+          {
+            "name": "Futures & the poll model",
+            "description": "The Future trait, Poll, and why futures are lazy state machines.",
+            "estimatedTime": "~2 hours",
+            "technologiesAndConcepts": ["Future", "Poll", "Waker"],
+            "prerequisites": ["Traits and generics", "Ownership and borrowing"],
+            "resources": ["https://rust-lang.github.io/async-book/"]
+          },
+          {
+            "name": "async / await syntax",
+            "description": "How async fn desugars and what .await actually does.",
+            "estimatedTime": "~2 hours",
+            "technologiesAndConcepts": ["async fn", ".await", "impl Future"],
+            "prerequisites": ["Futures & the poll model"],
+            "resources": ["https://doc.rust-lang.org/std/keyword.async.html"]
+          },
+          {
+            "name": "Pinning",
+            "description": "Self-referential futures, Pin<P>, and when Unpin matters.",
+            "estimatedTime": "~1 hour",
+            "technologiesAndConcepts": ["Pin", "Unpin", "pin!"],
+            "prerequisites": ["Smart pointers"],
+            "resources": ["https://doc.rust-lang.org/std/pin/"]
+          }
+        ]
+      },
+      {
+        "name": "Runtimes & Tasks",
+        "description": "Executors, spawning, and cooperative scheduling in Tokio.",
+        "estimatedTime": "~7 hours",
+        "subtopics": [
+          {
+            "name": "The Tokio runtime",
+            "description": "Multi-threaded vs current-thread runtimes and #[tokio::main].",
+            "estimatedTime": "~2 hours",
+            "technologiesAndConcepts": ["Tokio", "Runtime", "Executor"],
+            "prerequisites": ["async / await syntax"],
+            "resources": ["https://tokio.rs/tokio/tutorial"]
+          },
+          {
+            "name": "Spawning tasks",
+            "description": "tokio::spawn, JoinHandle, and the 'static + Send bounds.",
+            "estimatedTime": "~3 hours",
+            "technologiesAndConcepts": ["spawn", "JoinHandle", "Send"],
+            "prerequisites": ["The Tokio runtime"],
+            "resources": ["https://tokio.rs/tokio/tutorial/spawning"]
+          },
+          {
+            "name": "Blocking work",
+            "description": "spawn_blocking and keeping the reactor responsive.",
+            "estimatedTime": "~2 hours",
+            "technologiesAndConcepts": ["spawn_blocking", "block_in_place"],
+            "prerequisites": ["Spawning tasks"],
+            "resources": ["https://docs.rs/tokio/latest/tokio/task/fn.spawn_blocking.html"]
+          }
+        ]
+      },
+      {
+        "name": "Concurrency Patterns",
+        "description": "Coordinating many tasks safely with channels, select and shared state.",
+        "estimatedTime": "~8 hours",
+        "subtopics": [
+          {
+            "name": "Channels",
+            "description": "mpsc, oneshot, broadcast and watch channels.",
+            "estimatedTime": "~3 hours",
+            "technologiesAndConcepts": ["mpsc", "oneshot", "broadcast", "watch"],
+            "prerequisites": ["Spawning tasks"],
+            "resources": ["https://tokio.rs/tokio/tutorial/channels"]
+          },
+          {
+            "name": "select! and cancellation",
+            "description": "Racing futures and what happens to the losers.",
+            "estimatedTime": "~3 hours",
+            "technologiesAndConcepts": ["select!", "Cancellation safety"],
+            "prerequisites": ["Channels"],
+            "resources": ["https://tokio.rs/tokio/tutorial/select"]
+          },
+          {
+            "name": "Shared state",
+            "description": "Arc<Mutex<T>>, async mutexes, and when to prefer message passing.",
+            "estimatedTime": "~2 hours",
+            "technologiesAndConcepts": ["Arc", "Mutex", "RwLock"],
+            "prerequisites": ["Smart pointers"],
+            "resources": ["https://tokio.rs/tokio/tutorial/shared-state"]
+          }
+        ]
+      },
+      {
+        "name": "Building Services",
+        "description": "Put it together: an async TCP/HTTP service with graceful shutdown.",
+        "estimatedTime": "~8 hours",
+        "subtopics": [
+          {
+            "name": "Async I/O",
+            "description": "AsyncRead/AsyncWrite, framing, and TcpListener.",
+            "estimatedTime": "~3 hours",
+            "technologiesAndConcepts": ["AsyncRead", "TcpListener", "Framing"],
+            "prerequisites": ["Channels"],
+            "resources": ["https://tokio.rs/tokio/tutorial/io"]
+          },
+          {
+            "name": "HTTP with Axum",
+            "description": "Routing, extractors and shared application state.",
+            "estimatedTime": "~3 hours",
+            "technologiesAndConcepts": ["Axum", "Tower", "Extractors"],
+            "prerequisites": ["Async I/O"],
+            "resources": ["https://docs.rs/axum/latest/axum/"]
+          },
+          {
+            "name": "Graceful shutdown",
+            "description": "Signals, cancellation tokens and draining in-flight work.",
+            "estimatedTime": "~2 hours",
+            "technologiesAndConcepts": ["CancellationToken", "ctrl_c"],
+            "prerequisites": ["select! and cancellation"],
+            "resources": ["https://tokio.rs/tokio/topics/shutdown"]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "sample-nextjs",
+    "name": "Next.js 14 App Router",
+    "description": "Server components, data fetching and deployment with the App Router.",
+    "estimatedTime": "~22 hours",
+    "topics": [
+      {
+        "name": "Routing",
+        "description": "File-system routing with layouts, pages and route groups.",
+        "estimatedTime": "~5 hours",
+        "subtopics": [
+          {
+            "name": "Layouts & pages",
+            "description": "Nested layouts, templates and the root layout.",
+            "estimatedTime": "~2 hours",
+            "technologiesAndConcepts": ["layout.tsx", "page.tsx"],
+            "prerequisites": ["React basics"],
+            "resources": ["https://nextjs.org/docs/app/building-your-application/routing"]
+          },
+          {
+            "name": "Dynamic segments",
+            "description": "[slug], catch-all routes and generateStaticParams.",
+            "estimatedTime": "~3 hours",
+            "technologiesAndConcepts": ["[slug]", "generateStaticParams"],
+            "prerequisites": ["Layouts & pages"],
+            "resources": ["https://nextjs.org/docs/app/building-your-application/routing/dynamic-routes"]
+          }
+        ]
+      },
+      {
+        "name": "Rendering",
+        "description": "Server and client components and how they compose.",
+        "estimatedTime": "~7 hours",
+        "subtopics": [
+          {
+            "name": "Server Components",
+            "description": "Rendering on the server by default and what that unlocks.",
+            "estimatedTime": "~3 hours",
+            "technologiesAndConcepts": ["RSC", "Streaming"],
+            "prerequisites": ["Layouts & pages"],
+            "resources": ["https://nextjs.org/docs/app/building-your-application/rendering/server-components"]
+          },
+          {
+            "name": "Client Components",
+            "description": "'use client', interactivity and the network boundary.",
+            "estimatedTime": "~2 hours",
+            "technologiesAndConcepts": ["use client", "Hydration"],
+            "prerequisites": ["Server Components"],
+            "resources": ["https://nextjs.org/docs/app/building-your-application/rendering/client-components"]
+          },
+          {
+            "name": "Suspense & loading UI",
+            "description": "loading.tsx, Suspense boundaries and streaming HTML.",
+            "estimatedTime": "~2 hours",
+            "technologiesAndConcepts": ["Suspense", "loading.tsx"],
+            "prerequisites": ["Server Components"],
+            "resources": ["https://nextjs.org/docs/app/building-your-application/routing/loading-ui-and-streaming"]
+          }
+        ]
+      },
+      {
+        "name": "Data",
+        "description": "Fetching, caching and mutating data.",
+        "estimatedTime": "~6 hours",
+        "subtopics": [
+          {
+            "name": "fetch & caching",
+            "description": "The extended fetch API, revalidation and the data cache.",
+            "estimatedTime": "~3 hours",
+            "technologiesAndConcepts": ["fetch", "revalidate", "Data Cache"],
+            "prerequisites": ["Server Components"],
+            "resources": ["https://nextjs.org/docs/app/building-your-application/data-fetching"]
+          },
+          {
+            "name": "Server Actions",
+            "description": "Form mutations without API routes.",
+            "estimatedTime": "~3 hours",
+            "technologiesAndConcepts": ["use server", "Forms", "revalidatePath"],
+            "prerequisites": ["fetch & caching"],
+            "resources": ["https://nextjs.org/docs/app/building-your-application/data-fetching/server-actions-and-mutations"]
+          }
+        ]
+      },
+      {
+        "name": "Shipping",
+        "description": "Build output, deployment and performance.",
+        "estimatedTime": "~4 hours",
+        "subtopics": [
+          {
+            "name": "Deployment",
+            "description": "Standalone output, Docker and Vercel.",
+            "estimatedTime": "~2 hours",
+            "technologiesAndConcepts": ["output: standalone", "Docker"],
+            "prerequisites": ["Routing"],
+            "resources": ["https://nextjs.org/docs/app/building-your-application/deploying"]
+          },
+          {
+            "name": "Optimizations",
+            "description": "next/image, next/font and metadata.",
+            "estimatedTime": "~2 hours",
+            "technologiesAndConcepts": ["next/image", "next/font", "Metadata"],
+            "prerequisites": ["Rendering"],
+            "resources": ["https://nextjs.org/docs/app/building-your-application/optimizing"]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "sample-sql",
+    "name": "SQL for Analysts",
+    "description": "Query, aggregate and window your way through real analytical questions.",
+    "estimatedTime": "~16 hours",
+    "topics": [
+      {
+        "name": "Querying",
+        "description": "SELECT, filtering and sorting.",
+        "estimatedTime": "~4 hours",
+        "subtopics": [
+          {
+            "name": "SELECT & WHERE",
+            "description": "Projecting columns and filtering rows.",
+            "estimatedTime": "~2 hours",
+            "technologiesAndConcepts": ["SELECT", "WHERE", "ORDER BY"],
+            "prerequisites": [],
+            "resources": ["https://www.postgresql.org/docs/current/tutorial-select.html"]
+          },
+          {
+            "name": "Joins",
+            "description": "Inner, left and anti joins with real tables.",
+            "estimatedTime": "~2 hours",
+            "technologiesAndConcepts": ["JOIN", "LEFT JOIN", "Anti-join"],
+            "prerequisites": ["SELECT & WHERE"],
+            "resources": ["https://www.postgresql.org/docs/current/tutorial-join.html"]
+          }
+        ]
+      },
+      {
+        "name": "Aggregation",
+        "description": "Summaries with GROUP BY and HAVING.",
+        "estimatedTime": "~5 hours",
+        "subtopics": [
+          {
+            "name": "GROUP BY",
+            "description": "Counting, summing and averaging by category.",
+            "estimatedTime": "~3 hours",
+            "technologiesAndConcepts": ["GROUP BY", "COUNT", "SUM"],
+            "prerequisites": ["Joins"],
+            "resources": ["https://www.postgresql.org/docs/current/tutorial-agg.html"]
+          },
+          {
+            "name": "HAVING & CTEs",
+            "description": "Filtering groups and structuring queries with WITH.",
+            "estimatedTime": "~2 hours",
+            "technologiesAndConcepts": ["HAVING", "WITH"],
+            "prerequisites": ["GROUP BY"],
+            "resources": ["https://www.postgresql.org/docs/current/queries-with.html"]
+          }
+        ]
+      },
+      {
+        "name": "Window Functions",
+        "description": "Rankings, running totals and period-over-period change.",
+        "estimatedTime": "~7 hours",
+        "subtopics": [
+          {
+            "name": "OVER & PARTITION BY",
+            "description": "The window frame and partitioning.",
+            "estimatedTime": "~3 hours",
+            "technologiesAndConcepts": ["OVER", "PARTITION BY"],
+            "prerequisites": ["GROUP BY"],
+            "resources": ["https://www.postgresql.org/docs/current/tutorial-window.html"]
+          },
+          {
+            "name": "Ranking & LAG",
+            "description": "ROW_NUMBER, RANK and comparing to previous rows.",
+            "estimatedTime": "~4 hours",
+            "technologiesAndConcepts": ["ROW_NUMBER", "RANK", "LAG"],
+            "prerequisites": ["OVER & PARTITION BY"],
+            "resources": ["https://www.postgresql.org/docs/current/functions-window.html"]
+          }
+        ]
+      }
+    ]
+  }
+]
