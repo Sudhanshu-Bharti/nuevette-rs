@@ -46,6 +46,8 @@ pub enum ComposerEvent {
     Failed(String),
     /// The learner stopped drafting or building.
     Cancelled(String),
+    /// Open a path you already had instead of generating one.
+    OpenExisting(String),
 }
 
 /// Everything a build needs, gathered while drafting.
@@ -59,6 +61,9 @@ struct Request {
     /// The docs outline and excerpt Gemini works from.
     context: String,
     source: Option<String>,
+    /// The docs' own table of contents; when present, the outline is built
+    /// from it and every step cites its page.
+    nav: Vec<crate::services::docs::NavEntry>,
 }
 
 #[derive(Clone)]
@@ -119,13 +124,19 @@ pub struct ComposerView {
     phase: Phase,
     /// The goal and background of the draft in flight, kept for a retry.
     pending_intent: Intent,
+    store: Entity<crate::store::PathStore>,
+    /// Paths you already have for the topic just submitted, offered before
+    /// spending a generation on it: (id, name, progress).
+    library_offer: Option<Vec<(String, String, String)>>,
+    /// The topic you chose to generate anyway, so it isn't offered again.
+    generate_anyway: Option<String>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<ComposerEvent> for ComposerView {}
 
 impl ComposerView {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(store: Entity<crate::store::PathStore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let input = cx.new(|cx| {
             TextInput::new(window, cx)
                 .placeholder("e.g. Rust async, the Next.js App Router, SQL window functions\u{2026}")
@@ -169,6 +180,9 @@ impl ComposerView {
             failure: None,
             phase: Phase::Idle,
             pending_intent: Intent::default(),
+            store,
+            library_offer: None,
+            generate_anyway: None,
             _subscriptions,
         }
     }
@@ -214,8 +228,76 @@ impl ComposerView {
             goal: optional(&self.goal, cx),
             background: optional(&self.background, cx),
         };
+        // Paths you already have for this topic come first: no generation
+        // spent, and anything you edited on them is kept.
+        if self.generate_anyway.as_deref() != Some(topic.as_str()) {
+            let store = self.store.read(cx);
+            let found: Vec<(String, String, String)> = crate::services::library::matches(store.paths(), &topic)
+                .into_iter()
+                .map(|p| {
+                    let (done, total) = p.progress();
+                    (p.id.clone(), p.name.clone(), format!("{done} of {total} done"))
+                })
+                .collect();
+            if !found.is_empty() {
+                self.library_offer = Some(found);
+                cx.notify();
+                return;
+            }
+        }
+        self.library_offer = None;
         let models = cx.global::<Config>().gemini_models();
         self.start_draft(topic, intent, models, cx);
+    }
+
+    fn render_library_offer(&self, offer: &[(String, String, String)], cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let c = cx.theme().colors.clone();
+        let hover = glass::ink(cx, 0.05);
+        let rows = offer.iter().enumerate().map(|(ix, (id, name, progress))| {
+            let id = id.clone();
+            div()
+                .id(("library-match", ix))
+                .flex()
+                .items_center()
+                .gap_3()
+                .h(px(44.))
+                .px_3()
+                .rounded(px(12.))
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover))
+                .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(ComposerEvent::OpenExisting(id.clone()))))
+                .child(ely_gpui_component::primitives::Icon::new(IconName::BookOpen).color(c.accent))
+                .child(div().flex_1().min_w_0().text_ellipsis().font_weight(gpui::FontWeight::MEDIUM).child(name.clone()))
+                .child(div().text_size(px(12.)).text_color(c.fg_muted).child(progress.clone()))
+                .child(div().text_size(px(13.)).text_color(c.accent).child("Open"))
+        });
+        GlassCard::new()
+            .title("You already have a path for this")
+            .description("Open it to keep going, or generate a fresh one.")
+            .children(rows)
+            .footer(
+                div()
+                    .flex()
+                    .w_full()
+                    .gap_2()
+                    .child(div().flex_1())
+                    .child(
+                        glass::pill("library-dismiss", "Cancel", None, PillStyle::Quiet, cx).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                this.library_offer = None;
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        glass::pill("library-generate", "Generate a new one", Some(IconName::Sparkles), PillStyle::Ghost, cx)
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.generate_anyway = Some(this.input.read(cx).text().trim().to_string());
+                                this.library_offer = None;
+                                this.submit(cx);
+                            })),
+                    ),
+            )
     }
 
     fn field(label: &'static str, hint: Option<&'static str>, input: &Entity<TextInput>) -> gpui::Div {
@@ -397,6 +479,7 @@ impl Render for ComposerView {
         let reviewing = matches!(self.phase, Phase::Review(_));
         let form = (!reviewing).then(|| self.render_form(busy, cx));
         let failure = self.failure.as_ref().map(|f| self.render_failure(f, cx));
+        let library = self.library_offer.clone().map(|offer| self.render_library_offer(&offer, cx));
         let stage = match &self.phase {
             Phase::Drafting(generation) => Some(
                 GenerationPanel::new(
@@ -447,6 +530,7 @@ impl Render for ComposerView {
                     )
                     .children(form)
                     .children(self.error.clone().map(|error| InlineMessage::new(Severity::Danger, error)))
+                    .children(library)
                     .children(failure)
                     .children(stage),
             ),

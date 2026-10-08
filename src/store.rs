@@ -263,6 +263,7 @@ mod tests {
             estimated_time: "1h".into(),
             topics: Vec::new(),
             source_url: None,
+            topic_query: None,
             generated_by: None,
             level: None,
             completed: Default::default(),

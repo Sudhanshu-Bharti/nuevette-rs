@@ -1,13 +1,13 @@
 //! Inspector for the selected node: the full text the cards clip, plus
 //! concepts, prerequisites, resources and links to related nodes.
 
-use ely_gpui_component::forms::Checkbox;
+use ely_gpui_component::forms::{Checkbox, InlineEdit};
 use ely_gpui_component::data_display::{Tag, Tone};
 use ely_gpui_component::layout::ScrollArea;
 use ely_gpui_component::lists::ListItem;
 use ely_gpui_component::primitives::{Icon, IconName};
 use ely_gpui_component::theme::{ActiveTheme, IconSize, TextSize};
-use ely_gpui_component::typography::{Caption, ExternalLink, Overline, Paragraph, Title};
+use ely_gpui_component::typography::{Caption, ExternalLink, Overline, Paragraph};
 use gpui::{
     AnimationExt,
     AnyElement, App, ClickEvent, Context, Div, ElementId, Hsla, IntoElement, MouseButton, SharedString, Stateful, div,
@@ -15,6 +15,7 @@ use gpui::{
 };
 
 use super::MindMapView;
+use crate::model::Importance;
 use super::layout::NodeKind;
 use crate::ui::glass::{self, PillStyle};
 
@@ -162,6 +163,22 @@ impl MindMapView {
             }
             NodeKind::Subtopic(ti, si) => {
                 let sub = &self.path.topics[ti].subtopics[si];
+                let view = cx.entity().downgrade();
+                sections.push(
+                    section("Depth")
+                        .child(glass::segmented(
+                            SharedString::from(format!("depth-{ti}-{si}")),
+                            Importance::ALL.iter().map(|i| glass::Segment::new(i.label(), i.label())).collect(),
+                            sub.importance.label(),
+                            move |value, _, cx| {
+                                let importance =
+                                    Importance::ALL.into_iter().find(|i| i.label() == value.as_ref()).unwrap_or_default();
+                                view.update(cx, |this, cx| this.set_importance(ti, si, importance, cx)).ok();
+                            },
+                            cx,
+                        ))
+                        .into_any_element(),
+                );
                 if !sub.technologies_and_concepts.is_empty() {
                     let tags = sub.technologies_and_concepts.iter().enumerate().map(|(i, concept)| {
                         Tag::new(("concept", i), concept.clone()).tone(Tone::Neutral)
@@ -199,6 +216,16 @@ impl MindMapView {
                     });
                     sections.push(section("Resources").children(links).into_any_element());
                 }
+                // Where the step comes from: the docs page it was planned
+                // from, or a plain note that the AI wrote it.
+                sections.push(
+                    section("Source")
+                        .child(match sub.source.clone().filter(|s| is_url(s)) {
+                            Some(url) => ExternalLink::new("step-source", display_url(&url), url).into_any_element(),
+                            None => Caption::new("Written by the AI, not taken from the docs.").into_any_element(),
+                        })
+                        .into_any_element(),
+                );
                 let topic = &self.path.topics[ti];
                 let parent = self.nav_row(
                     "parent-row",
@@ -213,6 +240,7 @@ impl MindMapView {
         }
 
         let footer = self.render_footer(kind, cx);
+        let tools = self.render_tools(kind, cx);
         let close = glass::icon_button("close-inspector", IconName::X, "Close (Esc)", cx)
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.close_inspector(cx)));
 
@@ -248,6 +276,7 @@ impl MindMapView {
                     .border_color(c.border)
                     .child(Overline::new(eyebrow).text_color(tint))
                     .child(div().flex_1())
+                    .child(tools)
                     .child(close),
             )
             .child(
@@ -262,7 +291,22 @@ impl MindMapView {
                                 .flex()
                                 .flex_col()
                                 .gap_2()
-                                .child(Title::new(name))
+                                .child(
+                                    div().text_size(px(20.)).font_weight(gpui::FontWeight::SEMIBOLD).child(
+                                        InlineEdit::new(
+                                            SharedString::from(format!("rename-{}", super::layout::node_key(kind))),
+                                            name,
+                                        )
+                                        .placeholder("Name")
+                                        .on_commit({
+                                            let view = cx.entity().downgrade();
+                                            move |text, _, cx| {
+                                                let text = text.to_string();
+                                                view.update(cx, |this, cx| this.rename_node(kind, text, cx)).ok();
+                                            }
+                                        }),
+                                    ),
+                                )
                                 .child(Paragraph::new(description).text_color(c.fg_muted))
                                 .child(
                                     div()
@@ -287,6 +331,51 @@ impl MindMapView {
                 gpui::Animation::new(std::time::Duration::from_millis(240)).with_easing(gpui::ease_out_quint()),
                 |panel, d| panel.opacity(d).relative().left(px(28. * (1. - d))),
             )
+    }
+
+    /// Small round buttons to rearrange, add and delete, beside Close.
+    fn render_tools(&self, kind: NodeKind, cx: &mut Context<Self>) -> AnyElement {
+        let busy = self.path.building.is_some();
+        let tool = |id: &'static str, icon: IconName, tip: &'static str, enabled: bool, cx: &mut Context<Self>| {
+            let button = glass::icon_button(id, icon, tip, cx);
+            if enabled && !busy { button } else { glass::disabled(button) }
+        };
+        let row = div().flex().items_center().gap_1().pr_1();
+        match kind {
+            NodeKind::Root => row.into_any_element(),
+            NodeKind::Topic(ti) => {
+                let count = self.path.topics.len();
+                row.child(tool("topic-up", IconName::ArrowUp, "Move topic up", ti > 0, cx).on_click(
+                    cx.listener(move |this, _: &ClickEvent, _, cx| this.move_topic(ti, -1, cx)),
+                ))
+                .child(tool("topic-down", IconName::ArrowDown, "Move topic down", ti + 1 < count, cx).on_click(
+                    cx.listener(move |this, _: &ClickEvent, _, cx| this.move_topic(ti, 1, cx)),
+                ))
+                .child(tool("topic-add-step", IconName::Plus, "Add a step", true, cx).on_click(
+                    cx.listener(move |this, _: &ClickEvent, _, cx| this.add_step(ti, None, cx)),
+                ))
+                .child(tool("topic-delete", IconName::Trash2, "Delete topic", count > 1, cx).on_click(
+                    cx.listener(move |this, _: &ClickEvent, _, cx| this.delete_topic(ti, cx)),
+                ))
+                .into_any_element()
+            }
+            NodeKind::Subtopic(ti, si) => {
+                let count = self.path.topics[ti].subtopics.len();
+                row.child(tool("step-left", IconName::ArrowLeft, "Move step earlier", si > 0, cx).on_click(
+                    cx.listener(move |this, _: &ClickEvent, _, cx| this.move_step(ti, si, -1, cx)),
+                ))
+                .child(tool("step-right", IconName::ArrowRight, "Move step later", si + 1 < count, cx).on_click(
+                    cx.listener(move |this, _: &ClickEvent, _, cx| this.move_step(ti, si, 1, cx)),
+                ))
+                .child(tool("step-add", IconName::Plus, "Add a step after this", true, cx).on_click(
+                    cx.listener(move |this, _: &ClickEvent, _, cx| this.add_step(ti, Some(si), cx)),
+                ))
+                .child(tool("step-delete", IconName::Trash2, "Delete step", true, cx).on_click(
+                    cx.listener(move |this, _: &ClickEvent, _, cx| this.delete_step(ti, si, cx)),
+                ))
+                .into_any_element()
+            }
+        }
     }
 
     /// The study controls, pinned under the inspector's scrolling content:

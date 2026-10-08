@@ -87,6 +87,8 @@ pub enum PathsEvent {
     Open(String),
     Delete(String),
     NewPath,
+    /// Add paths from shared files.
+    Import,
 }
 
 pub struct PathsView {
@@ -177,6 +179,10 @@ impl Render for PathsView {
                     .child(div().w_2())
                     .child(div().flex().gap_1p5().children(filters))
                     .child(div().flex_1())
+                    .child(
+                        glass::pill("paths-import", "Import", Some(IconName::Upload), PillStyle::Quiet, cx)
+                            .on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(PathsEvent::Import))),
+                    )
                     .child(
                         glass::pill("paths-new", "New path", Some(IconName::Plus), PillStyle::Primary, cx)
                             .on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(PathsEvent::NewPath))),

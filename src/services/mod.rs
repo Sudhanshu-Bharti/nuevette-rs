@@ -3,6 +3,7 @@
 
 pub mod docs;
 pub mod gemini;
+pub mod library;
 pub mod links;
 pub mod partial;
 pub mod stream;

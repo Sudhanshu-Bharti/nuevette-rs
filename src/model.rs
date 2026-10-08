@@ -22,6 +22,37 @@ pub struct Subtopic {
     pub prerequisites: Vec<String>,
     #[serde(default)]
     pub resources: Vec<String>,
+    /// The docs page this step was taken from, when the path was built from
+    /// the docs' own table of contents. None means the model wrote it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub importance: Importance,
+}
+
+/// How much a step matters, as roadmap.sh marks it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Importance {
+    /// Every learner needs it.
+    #[default]
+    Core,
+    /// Useful, but fine to skip.
+    Optional,
+    /// One of several ways to do the same thing.
+    Alternative,
+}
+
+impl Importance {
+    pub const ALL: [Importance; 3] = [Importance::Core, Importance::Optional, Importance::Alternative];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Importance::Core => "Core",
+            Importance::Optional => "Optional",
+            Importance::Alternative => "Alternative",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -94,6 +125,10 @@ pub struct LearningPath {
     /// The documentation page the path was generated from, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_url: Option<String>,
+    /// What the learner typed to make it, e.g. "rust async"; used to offer
+    /// this path again instead of generating a new one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic_query: Option<String>,
     /// The Gemini model that generated the path, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generated_by: Option<String>,
@@ -122,6 +157,134 @@ pub fn new_path_id() -> String {
 }
 
 impl LearningPath {
+    /// Re-keys progress and saved positions after the topics or steps were
+    /// rearranged. `step` maps an old (topic, step) to its new place, or None
+    /// if it was removed; `topic` does the same for whole topics.
+    fn rekey(
+        &mut self,
+        topic: impl Fn(usize) -> Option<usize>,
+        step: impl Fn(usize, usize) -> Option<(usize, usize)>,
+    ) {
+        let parse = |key: &str| -> Option<(usize, usize)> {
+            let (t, s) = key.split_once('.')?;
+            Some((t.parse().ok()?, s.parse().ok()?))
+        };
+        self.completed = std::mem::take(&mut self.completed)
+            .into_iter()
+            .filter_map(|key| parse(&key).and_then(|(t, s)| step(t, s)).map(|(t, s)| subtopic_key(t, s)))
+            .collect();
+        self.completed_at = std::mem::take(&mut self.completed_at)
+            .into_iter()
+            .filter_map(|(key, at)| parse(&key).and_then(|(t, s)| step(t, s)).map(|(t, s)| (subtopic_key(t, s), at)))
+            .collect();
+        self.positions = std::mem::take(&mut self.positions)
+            .into_iter()
+            .filter_map(|(key, pos)| {
+                let moved = if let Some(rest) = key.strip_prefix('s') {
+                    parse(rest).and_then(|(t, s)| step(t, s)).map(|(t, s)| format!("s{t}.{s}"))
+                } else if let Some(rest) = key.strip_prefix('t') {
+                    rest.parse().ok().and_then(&topic).map(|t| format!("t{t}"))
+                } else {
+                    Some(key)
+                };
+                moved.map(|key| (key, pos))
+            })
+            .collect();
+    }
+
+    /// Moves a step within its topic, keeping its done mark with it.
+    pub fn move_subtopic(&mut self, ti: usize, from: usize, to: usize) {
+        let len = self.topics.get(ti).map_or(0, |t| t.subtopics.len());
+        if from >= len || to >= len || from == to {
+            return;
+        }
+        let sub = self.topics[ti].subtopics.remove(from);
+        self.topics[ti].subtopics.insert(to, sub);
+        self.rekey(Some, |t, s| {
+            if t != ti {
+                return Some((t, s));
+            }
+            Some((t, match s {
+                s if s == from => to,
+                s if from < to && s > from && s <= to => s - 1,
+                s if to < from && s >= to && s < from => s + 1,
+                s => s,
+            }))
+        });
+    }
+
+    /// Removes a step; later steps in the topic keep their done marks.
+    pub fn remove_subtopic(&mut self, ti: usize, si: usize) {
+        if self.topics.get(ti).is_none_or(|t| si >= t.subtopics.len()) {
+            return;
+        }
+        self.topics[ti].subtopics.remove(si);
+        self.rekey(Some, |t, s| match (t == ti, s.cmp(&si)) {
+            (false, _) => Some((t, s)),
+            (true, std::cmp::Ordering::Less) => Some((t, s)),
+            (true, std::cmp::Ordering::Equal) => None,
+            (true, std::cmp::Ordering::Greater) => Some((t, s - 1)),
+        });
+    }
+
+    /// Inserts a step at `at` in a topic, shifting later steps along.
+    pub fn insert_subtopic(&mut self, ti: usize, at: usize, sub: Subtopic) {
+        let Some(topic) = self.topics.get_mut(ti) else {
+            return;
+        };
+        let at = at.min(topic.subtopics.len());
+        topic.subtopics.insert(at, sub);
+        self.rekey(Some, |t, s| Some(if t == ti && s >= at { (t, s + 1) } else { (t, s) }));
+    }
+
+    /// Moves a whole topic, with its steps and their done marks.
+    pub fn move_topic(&mut self, from: usize, to: usize) {
+        let len = self.topics.len();
+        if from >= len || to >= len || from == to {
+            return;
+        }
+        let topic = self.topics.remove(from);
+        self.topics.insert(to, topic);
+        let shift = move |t: usize| match t {
+            t if t == from => to,
+            t if from < to && t > from && t <= to => t - 1,
+            t if to < from && t >= to && t < from => t + 1,
+            t => t,
+        };
+        self.rekey(move |t| Some(shift(t)), move |t, s| Some((shift(t), s)));
+    }
+
+    /// Removes a topic and its steps.
+    pub fn remove_topic(&mut self, ti: usize) {
+        if ti >= self.topics.len() {
+            return;
+        }
+        self.topics.remove(ti);
+        let shift = move |t: usize| match t.cmp(&ti) {
+            std::cmp::Ordering::Less => Some(t),
+            std::cmp::Ordering::Equal => None,
+            std::cmp::Ordering::Greater => Some(t - 1),
+        };
+        self.rekey(shift, move |t, s| shift(t).map(|t| (t, s)));
+    }
+
+    /// Recomputes the topic and path time estimates after an edit.
+    pub fn refresh_times(&mut self) {
+        let mut total = 0.;
+        for topic in &mut self.topics {
+            let hours: f32 = topic
+                .subtopics
+                .iter()
+                .map(|s| s.estimated_hours.or_else(|| parse_hours(&s.estimated_time)).unwrap_or(1.))
+                .sum();
+            if !topic.subtopics.is_empty() {
+                topic.estimated_time = format_hours(hours);
+            }
+            total += hours;
+        }
+        self.estimated_time = format_hours(total);
+    }
+
     pub fn subtopic_count(&self) -> usize {
         self.topics.iter().map(|t| t.subtopics.len()).sum()
     }
@@ -270,6 +433,25 @@ pub fn sample_paths() -> Vec<LearningPath> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn done_marks_follow_their_steps_through_edits() {
+        let mut path = sample_paths().remove(0);
+        let name = |p: &LearningPath, t: usize, s: usize| p.topics[t].subtopics[s].name.clone();
+        let first = name(&path, 0, 0);
+        path.completed.insert(subtopic_key(0, 0));
+        path.move_subtopic(0, 0, 2);
+        assert_eq!(name(&path, 0, 2), first);
+        assert!(path.is_done(0, 2) && !path.is_done(0, 0));
+        path.remove_subtopic(0, 0);
+        assert!(path.is_done(0, 1), "the done step shifted left with its topic");
+        path.move_topic(0, 1);
+        assert!(path.is_done(1, 1));
+        path.remove_topic(0);
+        assert!(path.is_done(0, 1));
+        path.remove_subtopic(0, 1);
+        assert!(path.completed.is_empty(), "deleting a done step drops its mark");
+    }
 
     #[test]
     fn samples_parse_with_camel_case_fields() {

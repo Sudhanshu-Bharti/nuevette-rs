@@ -198,6 +198,17 @@ pub struct DocsContext {
     /// Every page that was read, landing page first.
     pub pages: Vec<String>,
     pub text: String,
+    /// The docs' own table of contents, when the site has one; empty if not.
+    pub nav: Vec<NavEntry>,
+}
+
+/// One entry of a docs site's table of contents.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NavEntry {
+    pub title: String,
+    pub url: String,
+    /// 0 for top-level entries, 1 for their children, and so on.
+    pub depth: usize,
 }
 
 /// Reads the landing page and up to two "getting started" pages on the same
@@ -214,11 +225,18 @@ pub fn gather_context(agent: &ureq::Agent, url: &str, topic: &str) -> Result<Doc
     text.push_str(&outline(&landing).join("\n"));
 
     let mut pages = vec![url.to_string()];
+    let mut nav = navigation(&landing, &base);
     for link in start_links(&landing, &base).into_iter().take(MAX_FOLLOW_UPS) {
         let Ok(page) = fetch_html(agent, link.as_str()) else {
             continue;
         };
-        let lines = outline(&Html::parse_document(&page));
+        let document = Html::parse_document(&page);
+        // Landing pages often hide the sidebar; the first docs page has it.
+        let found = navigation(&document, &link);
+        if found.len() > nav.len() {
+            nav = found;
+        }
+        let lines = outline(&document);
         if !lines.is_empty() {
             text.push_str(&format!("\n\nOutline of {link}:\n{}", lines.join("\n")));
             pages.push(link.to_string());
@@ -233,6 +251,7 @@ pub fn gather_context(agent: &ureq::Agent, url: &str, topic: &str) -> Result<Doc
     Ok(DocsContext {
         pages,
         text: take_chars(&text, MAX_CONTEXT).to_string(),
+        nav,
     })
 }
 
@@ -270,6 +289,66 @@ pub fn outline(document: &Html) -> Vec<String> {
         })
         .take(MAX_OUTLINE)
         .collect()
+}
+
+/// Elements that usually hold a docs site's table of contents: mdBook,
+/// Sphinx, Docusaurus, VitePress, MkDocs, MDN, Next.js and plain `nav`s.
+const NAV_CONTAINERS: &str = "nav, aside, [role=navigation], .sidebar, #sidebar, .toc, #toc, .chapter, \
+    .toctree-wrapper, .sphinxsidebar, .bd-sidebar, .theme-doc-sidebar-container, .VPSidebar, \
+    .md-nav, .sidebar-inner, .docs-sidebar, .sidenav";
+/// Fewer links than this is a site menu, not a table of contents.
+const MIN_NAV: usize = 8;
+const MAX_NAV: usize = 160;
+
+/// The docs' own table of contents: the navigation block with the most links
+/// on the same site, as titled entries with their nesting depth.
+pub fn navigation(document: &Html, base: &Url) -> Vec<NavEntry> {
+    let containers = Selector::parse(NAV_CONTAINERS).expect("static selector");
+    let anchors = Selector::parse("a[href]").expect("static selector");
+    let mut best: Vec<NavEntry> = Vec::new();
+    for container in document.select(&containers) {
+        let mut entries: Vec<NavEntry> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for anchor in container.select(&anchors) {
+            let title = anchor.text().collect::<Vec<_>>().join(" ");
+            let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+            if title.is_empty() || title.len() > 90 {
+                continue;
+            }
+            let Some(href) = anchor.value().attr("href") else {
+                continue;
+            };
+            let Ok(mut link) = base.join(href) else {
+                continue;
+            };
+            link.set_fragment(None);
+            if link.host_str() != base.host_str() || !seen.insert(link.to_string()) {
+                continue;
+            }
+            // Depth is how many lists sit between the container and the link.
+            let depth = anchor
+                .ancestors()
+                .take_while(|node| node.id() != container.id())
+                .filter_map(ElementRef::wrap)
+                .filter(|el| matches!(el.value().name(), "ul" | "ol"))
+                .count();
+            entries.push(NavEntry { title, url: link.to_string(), depth });
+            if entries.len() >= MAX_NAV {
+                break;
+            }
+        }
+        if entries.len() > best.len() {
+            best = entries;
+        }
+    }
+    if best.len() < MIN_NAV {
+        return Vec::new();
+    }
+    let top = best.iter().map(|e| e.depth).min().unwrap_or(0);
+    for entry in &mut best {
+        entry.depth -= top;
+    }
+    best
 }
 
 /// Same-site links whose text reads like an entry point into the docs.
@@ -395,6 +474,21 @@ mod tests {
     fn nothing_official_means_no_pick() {
         let results = [result("https://medium.com/@x/rust", "Rust"), result("not a url", "")];
         assert_eq!(pick_official("Rust", &results), None);
+    }
+
+    #[test]
+    fn navigation_keeps_the_sidebar_order_and_nesting() {
+        let mut items = String::new();
+        for i in 0..9 {
+            items.push_str(&format!(r#"<li><a href="/book/ch{i}.html">Chapter {i}</a><ol><li><a href="/book/ch{i}-1.html">Part {i}.1</a></li></ol></li>"#));
+        }
+        let html = format!(r#"<html><body><nav><a href="/">Home</a></nav><aside><ol>{items}</ol></aside></body></html>"#);
+        let base = Url::parse("https://doc.example.org/book/").unwrap();
+        let nav = navigation(&Html::parse_document(&html), &base);
+        assert_eq!(nav.len(), 18);
+        assert_eq!((nav[0].title.as_str(), nav[0].depth), ("Chapter 0", 0));
+        assert_eq!((nav[1].title.as_str(), nav[1].depth), ("Part 0.1", 1));
+        assert_eq!(nav[1].url, "https://doc.example.org/book/ch0-1.html");
     }
 
     #[test]

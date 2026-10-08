@@ -57,6 +57,8 @@ pub struct Generation {
     pub model: Option<String>,
     /// How many pages of the docs were read, once known.
     pub pages_read: usize,
+    /// Entries in the docs' table of contents, when one was found.
+    pub contents_entries: usize,
     /// Set on cancel; the background work checks it between requests.
     pub cancelled: Arc<AtomicBool>,
     /// Non-fatal problems, e.g. "doc search failed, continuing without docs".
@@ -78,6 +80,7 @@ pub struct GenerationPanel {
     source: Option<SharedString>,
     model: Option<SharedString>,
     pages_read: usize,
+    contents_entries: usize,
     notes: Vec<SharedString>,
     on_cancel: CancelHandler,
 }
@@ -94,6 +97,7 @@ impl GenerationPanel {
             source: generation.source.clone().map(Into::into),
             model: generation.model.clone().map(Into::into),
             pages_read: generation.pages_read,
+            contents_entries: generation.contents_entries,
             notes: generation.notes.iter().cloned().map(Into::into).collect(),
             on_cancel: Box::new(on_cancel),
         }
@@ -109,7 +113,15 @@ impl RenderOnce for GenerationPanel {
                 let note = match stage {
                     Stage::SearchingDocs if stage < self.stage => self.source.clone(),
                     Stage::ReadingDocs if stage < self.stage && self.pages_read > 0 => Some(
-                        format!("{} {} read", self.pages_read, if self.pages_read == 1 { "page" } else { "pages" }).into(),
+                        match self.contents_entries {
+                            0 => format!("{} {} read", self.pages_read, if self.pages_read == 1 { "page" } else { "pages" }),
+                            n => format!(
+                                "{} {} read \u{00b7} table of contents found ({n} entries)",
+                                self.pages_read,
+                                if self.pages_read == 1 { "page" } else { "pages" }
+                            ),
+                        }
+                        .into(),
                     ),
                     Stage::DraftingOutline if stage <= self.stage => self.model.clone(),
                     _ => None,

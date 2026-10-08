@@ -59,7 +59,7 @@ impl NuevetteApp {
         let today = cx.new(|cx| TodayView::new(store.clone(), cx));
         let paths = cx.new(|cx| PathsView::new(store.clone(), cx));
         let settings = cx.new(|cx| SettingsView::new(store.clone(), window, cx));
-        let composer = cx.new(|cx| ComposerView::new(window, cx));
+        let composer = cx.new(|cx| ComposerView::new(store.clone(), window, cx));
         let toaster = cx.new(|_| Toaster::default());
 
         let _subscriptions = vec![
@@ -81,6 +81,7 @@ impl NuevetteApp {
                 PathsEvent::Open(id) => this.open_path(id, window, cx),
                 PathsEvent::Delete(id) => this.delete_path(id, window, cx),
                 PathsEvent::NewPath => this.show(Screen::Compose, window, cx),
+                PathsEvent::Import => this.import_paths(cx),
             }),
             cx.subscribe_in(&today, window, |this, _, event, window, cx| match event {
                 TodayEvent::Open(id) => this.open_path(id, window, cx),
@@ -117,6 +118,7 @@ impl NuevetteApp {
                     // Back to the composer, which shows what went wrong.
                     this.show(Screen::Compose, window, cx);
                 }
+                ComposerEvent::OpenExisting(id) => this.open_path(id, window, cx),
                 ComposerEvent::Cancelled(topic) => this.toast(
                     Toast::new("Generation cancelled")
                         .body(format!("\u{201c}{topic}\u{201d} was not saved.")),
@@ -143,6 +145,61 @@ impl NuevetteApp {
             _subscriptions,
             _map_sub: None,
         }
+    }
+
+    /// Adds paths from shared `.nuevette.json` files. A path you already have
+    /// (same id) comes in as a copy, so nothing of yours is overwritten.
+    fn import_paths(&mut self, cx: &mut Context<Self>) {
+        let chosen = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("Import".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(files))) = chosen.await else {
+                return;
+            };
+            let read = cx
+                .background_spawn(async move {
+                    let mut paths = Vec::new();
+                    let mut problems = Vec::new();
+                    for file in files {
+                        let name = file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                        match std::fs::read_to_string(&file).map_err(anyhow::Error::from).and_then(|t| crate::services::library::import(&t)) {
+                            Ok(found) => paths.extend(found),
+                            Err(error) => problems.push(format!("{name}: {error:#}")),
+                        }
+                    }
+                    (paths, problems)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                let (paths, problems) = read;
+                let count = paths.len();
+                this.store.update(cx, |store, cx| {
+                    for mut path in paths {
+                        if store.get(&path.id).is_some() {
+                            path.id = crate::model::new_path_id();
+                        }
+                        path.building = None;
+                        store.add(path, cx);
+                    }
+                });
+                let toast = if problems.is_empty() {
+                    Toast::new("Imported")
+                        .body(format!("{count} path{} added.", if count == 1 { "" } else { "s" }))
+                        .severity(Severity::Success)
+                } else {
+                    Toast::new(if count == 0 { "Couldn't import" } else { "Imported some files" })
+                        .body(problems.join("\n"))
+                        .severity(if count == 0 { Severity::Danger } else { Severity::Warning })
+                };
+                this.toast(toast, cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Clears every path at once and offers them back.
@@ -195,6 +252,16 @@ impl NuevetteApp {
                 MapEvent::Failed { title, body } => Toast::new(title.clone())
                     .body(body.clone())
                     .severity(Severity::Danger),
+                MapEvent::Edited { title, undo } => {
+                    let (store, before) = (this.store.clone(), (**undo).clone());
+                    Toast::new(title.clone()).undo(move |_, cx| {
+                        let before = before.clone();
+                        store.update(cx, |store, cx| {
+                            let id = before.id.clone();
+                            store.update_path(&id, cx, |path| *path = before);
+                        });
+                    })
+                }
             };
             this.toast(toast, cx);
         }));
@@ -262,6 +329,8 @@ impl NuevetteApp {
             ("action", "theme", _) => self.toggle_theme(window, cx),
             ("action", "fit", Some(map)) => map.update(cx, |map, cx| map.fit(cx)),
             ("action", "export", Some(map)) => map.update(cx, |map, cx| map.export(cx)),
+            ("action", "share", Some(map)) => map.update(cx, |map, cx| map.share(cx)),
+            ("action", "import", _) => self.import_paths(cx),
             ("path", id, _) => self.open_path(id, window, cx),
             // A topic ("goto:<path>:<t>") or a step ("goto:<path>:<t>.<s>") in
             // any path: open that path if needed, then select it.
@@ -293,6 +362,7 @@ impl NuevetteApp {
             Command::new("action:today", "Go to Today", IconName::House),
             Command::new("action:paths", "Go to Paths", IconName::Layers),
             Command::new("action:settings", "Open Settings", IconName::Settings),
+            Command::new("action:import", "Import a path file", IconName::Upload),
             Command::new(
                 "action:theme",
                 if dark { "Switch to light mode" } else { "Switch to dark mode" },
@@ -302,6 +372,7 @@ impl NuevetteApp {
         if self.mindmap.is_some() {
             actions.push(Command::new("action:fit", "Fit the map", IconName::Maximize2).keys(&["Ctrl", "0"]));
             actions.push(Command::new("action:export", "Export as Markdown", IconName::Download));
+            actions.push(Command::new("action:share", "Share this path as a file", IconName::Share2));
         }
         actions
     }

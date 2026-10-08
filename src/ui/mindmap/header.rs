@@ -33,8 +33,15 @@ impl MindMapView {
         let view = cx.entity().downgrade();
         let view_for_mode = view.clone();
         let menu = {
-            let (export, reset) = (view.clone(), view.clone());
+            let (export, reset, share) = (view.clone(), view.clone(), view.clone());
             Menu::new()
+                .item(
+                    MenuItem::new("Share as a file")
+                        .icon(IconName::Share2)
+                        .on_click(move |_, cx| {
+                            share.update(cx, |this, cx| this.share_file(cx)).ok();
+                        }),
+                )
                 .item(
                     MenuItem::new("Export as Markdown")
                         .icon(IconName::Download)

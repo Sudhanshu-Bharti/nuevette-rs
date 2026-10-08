@@ -16,6 +16,7 @@ use gpui::{
 
 use super::MindMapView;
 use super::layout::{NodeKind, node_key};
+use crate::model::Importance;
 use crate::ui::glass;
 
 /// Below this zoom, cards drop descriptions and concept pills.
@@ -68,6 +69,15 @@ impl MindMapView {
             _ => c.fg.opacity(0.09),
         };
         let hover_border = if selected { c.accent } else { c.fg.opacity(0.2) };
+        // Optional and alternative steps read lighter: a dashed edge and a label.
+        let (importance, sourced) = match node.kind {
+            NodeKind::Subtopic(ti, si) => {
+                let sub = &self.path.topics[ti].subtopics[si];
+                (sub.importance, sub.source.is_some())
+            }
+            _ => (Importance::Core, false),
+        };
+        let light_step = importance != Importance::Core && !selected && !done;
 
         let icon = move |name: IconName, size: f32, color: Hsla| {
             svg().path(name.path()).size(s(size)).flex_none().text_color(color)
@@ -95,6 +105,8 @@ impl MindMapView {
                 .when(done, |d| d.child(done_check(12.)))
                 .child(div().when(done, |d| d.text_color(c.success)).child(label))
                 .child(div().flex_1())
+                // A small book marks steps taken from the docs' own contents.
+                .when(sourced, |d| d.child(icon(IconName::BookOpen, 11., c.accent.opacity(0.8))))
                 .when_some(trailing, |d, (name, text)| {
                     d.child(icon(name, 11., c.fg_subtle)).child(div().text_color(c.fg_muted).child(text))
                 })
@@ -188,6 +200,7 @@ impl MindMapView {
             .bg(fill)
             .border_1()
             .border_color(border)
+            .when(light_step, |card| card.border_dashed().border_color(c.fg.opacity(0.22)))
             .overflow_hidden()
             .cursor(CursorStyle::PointingHand)
             .shadow(vec![resting_shadow])
@@ -276,12 +289,17 @@ impl MindMapView {
                     let sub = &self.path.topics[ti].subtopics[si];
                     let concepts = &sub.technologies_and_concepts;
                     let extra = concepts.len().saturating_sub(MAX_PILLS);
+                    let mark = match sub.importance {
+                        Importance::Core => "",
+                        Importance::Optional => "  OPTIONAL",
+                        Importance::Alternative => "  ALT",
+                    };
                     let label = if done {
                         "DONE".to_string()
                     } else if up_next {
-                        format!("{}.{}  UP NEXT", ti + 1, si + 1)
+                        format!("{}.{}  UP NEXT{mark}", ti + 1, si + 1)
                     } else {
-                        format!("{}.{}", ti + 1, si + 1)
+                        format!("{}.{}{mark}", ti + 1, si + 1)
                     };
                     card.child(eyebrow(label.into(), Some((IconName::Clock, sub.estimated_time.clone()))))
                         .child(title(sub.name.clone(), 14., 1.))

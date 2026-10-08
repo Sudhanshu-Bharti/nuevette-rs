@@ -12,7 +12,8 @@ use super::gemini::{
     self, ENDPOINT, GeminiError, Intent, Learner, api_error, candidate_parts, finish_path, is_transient,
     path_schema,
 };
-use crate::model::LearningPath;
+use super::docs::NavEntry;
+use crate::model::{LearningPath, Subtopic};
 
 /// A draft the learner can edit before the full path is built.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -27,35 +28,123 @@ pub struct OutlineTopic {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    /// The docs pages this topic covers, in order, when the outline was built
+    /// from the docs' table of contents; each becomes one step.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<OutlineStep>,
 }
 
-fn outline_schema() -> Value {
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct OutlineStep {
+    pub title: String,
+    pub url: String,
+}
+
+/// The outline as Gemini returns it: topics refer to table-of-contents
+/// entries by number, so it can only choose steps, never invent them.
+#[derive(Deserialize)]
+struct RawOutline {
+    name: String,
+    description: String,
+    topics: Vec<RawTopic>,
+}
+
+#[derive(Deserialize)]
+struct RawTopic {
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    entries: Vec<i64>,
+}
+
+/// Turns entry numbers into steps. Unknown numbers, and entries already used
+/// by an earlier topic, are dropped.
+fn resolve(raw: RawOutline, nav: &[NavEntry]) -> Outline {
+    let mut used = std::collections::HashSet::new();
+    Outline {
+        name: raw.name,
+        description: raw.description,
+        topics: raw
+            .topics
+            .into_iter()
+            .map(|topic| OutlineTopic {
+                steps: topic
+                    .entries
+                    .iter()
+                    .filter_map(|n| usize::try_from(*n).ok()?.checked_sub(1))
+                    .filter(|ix| *ix < nav.len() && used.insert(*ix))
+                    .map(|ix| OutlineStep { title: nav[ix].title.clone(), url: nav[ix].url.clone() })
+                    .collect(),
+                name: topic.name,
+                description: topic.description,
+            })
+            .filter(|topic| nav.is_empty() || !topic.steps.is_empty())
+            .collect(),
+    }
+}
+
+fn outline_schema(grounded: bool) -> Value {
     let string = json!({ "type": "STRING" });
+    let topic = if grounded {
+        json!({
+            "type": "OBJECT",
+            "properties": {
+                "name": string, "description": string,
+                "entries": { "type": "ARRAY", "items": { "type": "INTEGER" } },
+            },
+            "required": ["name", "description", "entries"],
+            "propertyOrdering": ["name", "description", "entries"],
+        })
+    } else {
+        json!({
+            "type": "OBJECT",
+            "properties": { "name": string, "description": string },
+            "required": ["name", "description"],
+            "propertyOrdering": ["name", "description"],
+        })
+    };
     json!({
         "type": "OBJECT",
         "properties": {
             "name": string, "description": string,
-            "topics": { "type": "ARRAY", "items": {
-                "type": "OBJECT",
-                "properties": { "name": string, "description": string },
-                "required": ["name", "description"],
-                "propertyOrdering": ["name", "description"],
-            }},
+            "topics": { "type": "ARRAY", "items": topic },
         },
         "required": ["name", "description", "topics"],
         "propertyOrdering": ["name", "description", "topics"],
     })
 }
 
-pub fn outline_prompt(topic: &str, learner: Learner, intent: &Intent, docs_context: &str) -> String {
+pub fn outline_prompt(
+    topic: &str,
+    learner: Learner,
+    intent: &Intent,
+    docs_context: &str,
+    nav: &[NavEntry],
+) -> String {
+    let base = gemini::build_prompt(topic, learner, intent, docs_context);
+    let base = base.split("\n\nOrganize it as").next().unwrap_or_default();
+    if nav.is_empty() {
+        return format!(
+            "{base}\n\nFor now, plan only: give the path a short name, a one-sentence description, \
+             and its 5-7 topics (each a name and a one-sentence description), ordered from \
+             foundational to advanced. Do not list subtopics yet."
+        );
+    }
+    let contents: Vec<String> = nav
+        .iter()
+        .enumerate()
+        .map(|(ix, entry)| format!("{}{}. {}", "  ".repeat(entry.depth), ix + 1, entry.title))
+        .collect();
     format!(
-        "{}\n\nFor now, plan only: give the path a short name, a one-sentence description, and \
-         its 5-7 topics (each a name and a one-sentence description), ordered from foundational \
-         to advanced. Do not list subtopics yet.",
-        gemini::build_prompt(topic, learner, intent, docs_context)
-            .split("\n\nOrganize it as")
-            .next()
-            .unwrap_or_default()
+        "{base}\n\nThis is the documentation's own table of contents, numbered:\n{}\n\n\
+         Plan the path from these entries only. Give it a short name, a one-sentence description, \
+         and 5-7 topics ordered from foundational to advanced, each with a name of your own, a \
+         one-sentence description, and `entries`: the numbers of 3-8 entries it covers, in the \
+         order to study them. Use each number at most once. Leave out entries that don't help \
+         this learner (changelogs, legal pages, API listings a beginner doesn't need). Never use \
+         a number that isn't in the list.",
+        contents.join("\n"),
     )
 }
 
@@ -72,11 +161,22 @@ pub fn build_prompt(
         .iter()
         .enumerate()
         .map(|(ix, t)| {
-            if t.description.trim().is_empty() {
+            let mut line = if t.description.trim().is_empty() {
                 format!("{}. {}", ix + 1, t.name)
             } else {
                 format!("{}. {}: {}", ix + 1, t.name, t.description)
+            };
+            if !t.steps.is_empty() {
+                line.push_str(&format!(
+                    "\n   Write exactly {} subtopics for this topic, one per documentation page, in \
+                     this order, each named after its page:",
+                    t.steps.len()
+                ));
+                for step in &t.steps {
+                    line.push_str(&format!("\n   - {} ({})", step.title, step.url));
+                }
             }
+            line
         })
         .collect();
     format!(
@@ -93,9 +193,12 @@ pub fn draft_outline(
     api_key: &str,
     model: &str,
     prompt: &str,
+    nav: &[NavEntry],
     cancelled: &AtomicBool,
 ) -> Result<Outline, GeminiError> {
-    let outline: Outline = gemini::generate(agent, api_key, model, prompt, outline_schema(), cancelled)?;
+    let raw: RawOutline =
+        gemini::generate(agent, api_key, model, prompt, outline_schema(!nav.is_empty()), cancelled)?;
+    let outline = resolve(raw, nav);
     if outline.topics.is_empty() {
         return Err(anyhow!("Gemini returned an outline with no topics").into());
     }
@@ -189,10 +292,39 @@ pub fn finish(text: &str, learner: Learner, outline: &Outline) -> Result<Learnin
     }
     for (topic, planned) in path.topics.iter_mut().zip(&outline.topics) {
         topic.name = planned.name.clone();
+        cite(&mut topic.subtopics, &planned.steps);
     }
     path.name = outline.name.clone();
     finish_path(&mut path, learner)?;
     Ok(path)
+}
+
+/// Ties a topic's steps to the docs pages they were planned from: one step
+/// per page, in order, each citing its page (missing ones get a stub so the
+/// page is never lost; extras the model added are dropped).
+fn cite(subtopics: &mut Vec<Subtopic>, steps: &[OutlineStep]) {
+    if steps.is_empty() {
+        return;
+    }
+    subtopics.truncate(steps.len());
+    for (ix, step) in steps.iter().enumerate() {
+        if ix == subtopics.len() {
+            subtopics.push(Subtopic {
+                name: step.title.clone(),
+                description: String::new(),
+                estimated_time: String::new(),
+                estimated_hours: None,
+                technologies_and_concepts: Vec::new(),
+                prerequisites: Vec::new(),
+                resources: Vec::new(),
+                source: None,
+                importance: Default::default(),
+            });
+        }
+        let sub = &mut subtopics[ix];
+        sub.source = Some(step.url.clone());
+        sub.resources.retain(|r| r != &step.url);
+    }
 }
 
 #[cfg(test)]
@@ -210,15 +342,15 @@ mod tests {
             name: "My Rust".into(),
             description: "d".into(),
             topics: vec![
-                OutlineTopic { name: "Basics".into(), description: "start here".into() },
-                OutlineTopic { name: "Ownership".into(), description: String::new() },
+                OutlineTopic { name: "Basics".into(), description: "start here".into(), steps: Vec::new() },
+                OutlineTopic { name: "Ownership".into(), description: String::new(), steps: Vec::new() },
             ],
         }
     }
 
     #[test]
     fn prompts_plan_first_then_lock_the_outline() {
-        let plan = outline_prompt("Rust", LEARNER, &Intent::default(), "");
+        let plan = outline_prompt("Rust", LEARNER, &Intent::default(), "", &[]);
         assert!(plan.contains("plan only") && !plan.contains("Organize it as"));
         let build = build_prompt("Rust", LEARNER, &Intent::default(), "", &outline());
         assert!(build.contains("Name the path \"My Rust\""));

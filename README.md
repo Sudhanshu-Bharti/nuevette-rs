@@ -8,8 +8,12 @@ Built in Rust with [GPUI](https://github.com/zed-industries/zed/tree/main/crates
 
 ## What it does
 
-- **New path.** Give it a topic, plus an optional goal, what you already know, your level and your pace. It reads the official docs, shows you an outline to rename, reorder or trim, then writes the full path. Topics show up on the map as they're written.
-- **Map.** Each topic is a row, and its steps run left to right. Click a step to see what it covers, the key concepts, prerequisites and links to read. Press Space to mark it done and move to the next one.
+- **New path.** Give it a topic, plus an optional goal, what you already know, your level and your pace. It reads the official docs, shows you an outline to rename, reorder or trim, then writes the full path. Topics show up on the map as they're written. If you already have a path for that topic, it offers that one first.
+- **Built from the real docs.** When the docs site has a table of contents (most do), the steps come straight from it. The AI only groups them into topics and writes the details, so it can't make up steps. Every step links to the docs page it came from.
+- **Map.** Each topic is a row, and its steps run left to right. Click a step to see what it covers, the key concepts, prerequisites, links and where it came from. Press Space to mark it done and move to the next one.
+- **Core, optional or alternative.** Steps are marked like roadmap.sh does. Optional and alternative ones have a dashed edge, so a big map stays easy to read.
+- **Edit the map.** Rename, add, move or delete topics and steps from the side panel. Your done marks stay with the right steps, and deletes can be undone.
+- **Share a path.** Save any path as a `.nuevette.json` file and send it to someone. They add it with Import on the Paths screen. Your own progress isn't included.
 - **Today.** Your next step, every path and how far along it is, and what you finished recently.
 - **Paths.** Every path you have, filtered by in progress, not started or done.
 - **Search (Ctrl+K).** Jump to any action, path or step.

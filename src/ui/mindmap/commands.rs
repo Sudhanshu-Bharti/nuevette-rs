@@ -119,6 +119,40 @@ impl MindMapView {
     }
 }
 
+impl MindMapView {
+    /// Saves the path as a `.nuevette.json` file to send to someone: the
+    /// content without your progress.
+    pub(super) fn share_file(&mut self, cx: &mut Context<Self>) {
+        let text = match crate::services::library::export(&self.path, crate::stats::now_secs()) {
+            Ok(text) => text,
+            Err(error) => {
+                cx.emit(MapEvent::Failed { title: "Couldn't share".into(), body: format!("{error:#}") });
+                return;
+            }
+        };
+        let suggested = crate::services::library::file_name(&self.path);
+        let folder = dirs::document_dir().or_else(dirs::home_dir).unwrap_or_default();
+        let chosen = cx.prompt_for_new_path(&folder, Some(&suggested));
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(file))) = chosen.await else {
+                return;
+            };
+            let written = cx.background_spawn(async move { std::fs::write(&file, text).map(|()| file) }).await;
+            this.update(cx, |_, cx| {
+                cx.emit(match written {
+                    Ok(file) => MapEvent::Done {
+                        title: "Path saved as a file".into(),
+                        body: format!("Send {} to anyone; they can open it with Import.", file.display()),
+                    },
+                    Err(error) => MapEvent::Failed { title: "Couldn't share".into(), body: error.to_string() },
+                })
+            })
+            .ok();
+        })
+        .detach();
+    }
+}
+
 fn in_topic(kind: NodeKind, topic: usize) -> bool {
     matches!(kind, NodeKind::Topic(t) | NodeKind::Subtopic(t, _) if t == topic)
 }

@@ -78,6 +78,9 @@ const RULES: &str = "For each subtopic give: a one- or two-sentence description 
      concepts to study; prerequisites, naming earlier subtopics where they apply; and 1-3 \
      resources as full https:// URLs to specific pages of the official documentation or other \
      well-known authoritative sites. Only give URLs you are confident exist; never invent them. \
+     Mark each subtopic's importance: \"core\" for what every learner needs, \"optional\" for \
+     useful extras that can be skipped, \"alternative\" when it is one of several ways to do \
+     the same thing. Most subtopics are core. \
      Do not include placeholder text or comments like \"other topics would follow\".";
 
 fn docs_block(docs_context: &str) -> String {
@@ -137,11 +140,12 @@ fn topic_schema() -> Value {
         "properties": {
             "name": string, "description": string, "estimatedHours": { "type": "NUMBER" },
             "technologiesAndConcepts": strings, "prerequisites": strings, "resources": strings,
+            "importance": { "type": "STRING", "enum": ["core", "optional", "alternative"] },
         },
         "required": ["name", "description", "estimatedHours", "technologiesAndConcepts",
-                     "prerequisites", "resources"],
+                     "prerequisites", "resources", "importance"],
         "propertyOrdering": ["name", "description", "estimatedHours", "technologiesAndConcepts",
-                             "prerequisites", "resources"],
+                             "prerequisites", "resources", "importance"],
     });
     json!({
         "type": "OBJECT",
@@ -526,6 +530,6 @@ mod tests {
         let schema = path_schema();
         let subtopic = &schema["properties"]["topics"]["items"]["properties"]["subtopics"]["items"];
         assert_eq!(subtopic["properties"]["estimatedHours"]["type"], "NUMBER");
-        assert_eq!(subtopic["required"].as_array().unwrap().len(), 6);
+        assert_eq!(subtopic["required"].as_array().unwrap().len(), 7);
     }
 }

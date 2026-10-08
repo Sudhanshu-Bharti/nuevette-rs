@@ -108,7 +108,31 @@ impl ComposerView {
                                     }),
                             ),
                         )
-                        .child(div().px_3().child(Caption::new(topic.description.clone()))),
+                        .child(div().px_3().child(Caption::new(topic.description.clone())))
+                        // The docs pages this topic will become, when planned from
+                        // the docs' table of contents.
+                        .when(!topic.steps.is_empty(), |col| {
+                            let names: Vec<&str> = topic.steps.iter().map(|s| s.title.as_str()).collect();
+                            col.child(
+                                div()
+                                    .px_3()
+                                    .pt_1()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1p5()
+                                    .text_size(px(12.))
+                                    .text_color(c.fg_subtle)
+                                    .child(ely_gpui_component::primitives::Icon::new(IconName::BookOpen)
+                                        .size(ely_gpui_component::theme::IconSize::Xs)
+                                        .color(c.accent))
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .text_ellipsis()
+                                            .child(format!("{} steps from the docs: {}", names.len(), names.join(", "))),
+                                    ),
+                            )
+                        }),
                 )
                 .child(
                     div()
@@ -185,6 +209,7 @@ impl ComposerView {
                                         review.outline.topics.push(OutlineTopic {
                                             name: "New topic".into(),
                                             description: String::new(),
+                                            steps: Vec::new(),
                                         })
                                     })
                                 })),

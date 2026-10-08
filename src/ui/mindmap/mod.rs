@@ -6,6 +6,7 @@
 mod commands;
 mod detail;
 mod edges;
+mod edit;
 mod expand;
 mod export;
 mod header;
@@ -52,6 +53,8 @@ pub enum MapEvent {
     StopBuild,
     Done { title: String, body: String },
     Failed { title: String, body: String },
+    /// Something was removed from the path; `undo` is the path before.
+    Edited { title: String, undo: Box<LearningPath> },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +93,8 @@ pub struct MindMapView {
     camera: Option<Task<()>>,
     /// A viewport `ensure_visible` wants; the caller starts the glide.
     pending_glide: Option<Viewport>,
+    /// What to select once an edit has been laid out again.
+    reselect: Option<NodeKind>,
     focus_handle: FocusHandle,
     _store_sub: Subscription,
 }
@@ -129,6 +134,7 @@ impl MindMapView {
             view_mode: ViewMode::Map,
             camera: None,
             pending_glide: None,
+            reselect: None,
             focus_handle: cx.focus_handle(),
         }
     }
@@ -153,6 +159,9 @@ impl MindMapView {
             self.selected = selected.and_then(|kind| self.nodes.iter().position(|n| n.kind == kind));
         }
         self.path = path;
+        if let Some(kind) = self.reselect.take() {
+            self.selected = self.nodes.iter().position(|n| n.kind == kind);
+        }
         if refit {
             self.fit_view(cx);
         }
@@ -363,6 +372,10 @@ impl MindMapView {
 
     pub fn fit(&mut self, cx: &mut Context<Self>) {
         self.fit_view(cx);
+    }
+
+    pub fn share(&mut self, cx: &mut Context<Self>) {
+        self.share_file(cx);
     }
 
     pub fn export(&mut self, cx: &mut Context<Self>) {

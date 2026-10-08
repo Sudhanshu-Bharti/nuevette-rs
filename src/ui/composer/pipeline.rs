@@ -42,6 +42,7 @@ impl ComposerView {
                     models,
                     context: String::new(),
                     source: None,
+                    nav: Vec::new(),
                 };
                 let result = Self::run_draft(&this, request, config, cancelled, cx).await;
                 this.update(cx, |this, cx| this.finish_draft(result, cx)).ok();
@@ -64,6 +65,7 @@ impl ComposerView {
             source: None,
             model: None,
             pages_read: 0,
+            contents_entries: 0,
             cancelled,
             notes: Vec::new(),
             _task: task,
@@ -126,9 +128,13 @@ impl ComposerView {
             let (agent, topic) = (agent.clone(), topic.clone());
             match cx.background_spawn(async move { docs::gather_context(&agent, &url, &topic) }).await {
                 Ok(context) => {
-                    let pages = context.pages.len();
-                    update(cx, &|g: &mut Generation| g.pages_read = pages)?;
+                    let (pages, entries) = (context.pages.len(), context.nav.len());
+                    update(cx, &|g: &mut Generation| {
+                        g.pages_read = pages;
+                        g.contents_entries = entries;
+                    })?;
                     request.context = context.text;
+                    request.nav = context.nav;
                 }
                 Err(error) => {
                     note(cx, format!("Couldn't read the docs ({error:#}); continuing without them."))?;
@@ -139,7 +145,7 @@ impl ComposerView {
 
         update(cx, &|g: &mut Generation| g.stage = Stage::DraftingOutline)?;
         let api_key = config.gemini_api_key.clone().ok_or_else(|| anyhow!("GEMINI_API_KEY isn't set"))?;
-        let prompt = stream::outline_prompt(&topic, request.learner, &request.intent, &request.context);
+        let prompt = stream::outline_prompt(&topic, request.learner, &request.intent, &request.context, &request.nav);
         let models = request.models.clone();
         for (ix, model) in models.iter().enumerate() {
             update(cx, &|g: &mut Generation| g.model = Some(model.clone()))?;
@@ -147,7 +153,8 @@ impl ComposerView {
                 .background_spawn({
                     let (agent, api_key, model, prompt, cancelled) =
                         (agent.clone(), api_key.clone(), model.clone(), prompt.clone(), cancelled.clone());
-                    async move { stream::draft_outline(&agent, &api_key, &model, &prompt, &cancelled) }
+                    let nav = request.nav.clone();
+                    async move { stream::draft_outline(&agent, &api_key, &model, &prompt, &nav, &cancelled) }
                 })
                 .await;
             match attempt {
@@ -261,6 +268,7 @@ impl ComposerView {
         let mut path = finished.ok_or_else(|| anyhow!("no Gemini model is configured"))?;
         path.id = draft.id.clone();
         path.source_url = request.source.clone();
+        path.topic_query = Some(request.topic.clone());
         path.generated_by = draft.generated_by.clone();
         path.building = Some("Checking resource links".into());
         emit(cx, &path);
@@ -359,6 +367,7 @@ fn skeleton(review: &Review, id: String) -> LearningPath {
             })
             .collect(),
         source_url: request.source.clone(),
+        topic_query: Some(request.topic.clone()),
         generated_by: request.models.first().cloned(),
         level: Some(request.learner.level),
         completed: Default::default(),
