@@ -1,7 +1,3 @@
-//! Settings: profile, appearance, New path defaults, and what the app is
-//! configured with (keys are shown as set or missing, never their values),
-//! plus exporting and clearing local data.
-
 use std::time::Duration;
 
 use ely_gpui_component::forms::{Input, InputEvent, TextInput};
@@ -22,7 +18,6 @@ use crate::ui::composer::PACES;
 use crate::ui::glass::{self, GlassCard, Hue, PillStyle, Segment};
 
 pub enum SettingsEvent {
-    /// Every path should go, with a way back.
     ClearData,
     Exported(String),
     ExportFailed(String),
@@ -31,7 +26,6 @@ pub enum SettingsEvent {
 pub struct SettingsView {
     store: Entity<PathStore>,
     name: Entity<TextInput>,
-    /// Clearing takes a second click while this is set; it lapses on its own.
     confirm_clear: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }

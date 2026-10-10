@@ -22,6 +22,9 @@ url = "2.5.8"
 jiff = "0.2"
 futures = "0.3"
 
+[build-dependencies]
+embed-resource = "3"
+
 # GPUI is far too slow unoptimized: build every dependency with full
 # optimizations even in dev, and our own code lightly, so panning and zooming
 # stay smooth while our rebuilds stay quick. Debug assertions stay on, so

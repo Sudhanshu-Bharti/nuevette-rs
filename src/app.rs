@@ -1,7 +1,3 @@
-//! Root view: the glow, a title bar with the pill nav, a stage (Today,
-//! Paths, the composer, or an open path), and a status bar. Toasts confirm
-//! deletes (with undo), new paths and map actions.
-
 use ely_gpui_component::feedback::{Toast, ToastViewport, Toaster};
 use ely_gpui_component::primitives::{FocusScope, IconName, Severity};
 use ely_gpui_component::shell::{StatusBar, StatusBarItem};

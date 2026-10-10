@@ -1,0 +1,2 @@
+// Resource 1 is the icon gpui loads for the window and taskbar (gpui_windows load_icon).
+1 ICON "nuevette.ico"

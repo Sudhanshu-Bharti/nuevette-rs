@@ -56,13 +56,9 @@ struct Request {
     topic: String,
     intent: Intent,
     learner: Learner,
-    /// Models to try, in order.
     models: Vec<String>,
-    /// The docs outline and excerpt Gemini works from.
     context: String,
     source: Option<String>,
-    /// The docs' own table of contents; when present, the outline is built
-    /// from it and every step cites its page.
     nav: Vec<crate::services::docs::NavEntry>,
 }
 
@@ -87,8 +83,6 @@ enum Phase {
 }
 
 impl Phase {
-    /// Stops the build of `path_id`, if that is what is running, without
-    /// reporting it: the path is already gone. Returns whether it stopped.
     fn abandon(&mut self, path_id: &str) -> bool {
         if !matches!(self, Phase::Building(building) if building.path_id == path_id) {
             return false;
@@ -150,7 +144,7 @@ impl ComposerView {
         let background = cx.new(|cx| {
             TextInput::new(window, cx)
                 .placeholder("e.g. Comfortable with Python, new to systems programming")
-                .label("What you already know")
+                .label("What you already know.")
         });
         let submit_on_enter = |this: &mut Self, event: &InputEvent, cx: &mut Context<Self>| {
             if *event == InputEvent::Submit {
@@ -162,7 +156,6 @@ impl ComposerView {
             cx.subscribe(&background, move |this, _, event, cx| submit_on_enter(this, event, cx)),
             cx.subscribe(&input, |this, _, event: &InputEvent, cx| match event {
                 InputEvent::Submit => this.submit(cx),
-                // Typing clears a stale error; chips re-render to show which one matches.
                 InputEvent::Changed => {
                     this.error = None;
                     cx.notify();

@@ -3701,6 +3701,7 @@ dependencies = [
  "dirs 7.0.0",
  "dotenvy",
  "ely-gpui-component",
+ "embed-resource",
  "futures",
  "gpui",
  "gpui_platform",

@@ -98,7 +98,7 @@ src/
     palette.rs     search (Ctrl+K)
     settings_view.rs
     glass.rs       shared cards, pills and other building blocks
-assets/            the background glow images and sample paths
+assets/            the background glow images, sample paths, the app icon and the pixel mascot
 ```
 
 ## Development

@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use ely_gpui_component::primitives::{Icon, IconName, Tooltip};
 use ely_gpui_component::theme::{ActiveTheme, IconSize};
-use gpui::{AnyElement, App, FontWeight, IntoElement, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, FontWeight, IntoElement, Window, div, img, prelude::*, px};
 
 use crate::ui::glass::{self, PillStyle};
 
@@ -63,16 +63,7 @@ pub fn brand(cx: &App) -> AnyElement {
         .flex_none()
         .items_center()
         .gap_2()
-        .child(
-            div()
-                .size(px(26.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(8.))
-                .bg(c.accent)
-                .child(Icon::new(IconName::Sparkles).size(IconSize::Sm).color(c.on_accent)),
-        )
+        .child(img("nuevette-mark.png").size(px(28.)).flex_none())
         .child(
             div()
                 .text_size(px(17.))

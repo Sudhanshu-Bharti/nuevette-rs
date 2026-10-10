@@ -11,6 +11,8 @@ pub const SAMPLES_JSON: &str = include_str!("../assets/samples.json");
 pub const GLOW_PNG: &[u8] = include_bytes!("../assets/glow.png");
 /// Its light-mode twin (`scripts/glow.py --light`).
 pub const GLOW_LIGHT_PNG: &[u8] = include_bytes!("../assets/glow-light.png");
+/// The pixel mascot in the title bar (16x16 art, scaled 8x nearest-neighbour).
+pub const MARK_PNG: &[u8] = include_bytes!("../assets/nuevette-mark.png");
 
 /// Ely's assets. Kept as a wrapper so app assets can be layered in later.
 pub struct AppAssets;
@@ -20,6 +22,7 @@ impl AssetSource for AppAssets {
         match path {
             "glow.png" => return Ok(Some(Cow::Borrowed(GLOW_PNG))),
             "glow-light.png" => return Ok(Some(Cow::Borrowed(GLOW_LIGHT_PNG))),
+            "nuevette-mark.png" => return Ok(Some(Cow::Borrowed(MARK_PNG))),
             _ => {}
         }
         ely_gpui_component::Assets.load(path)

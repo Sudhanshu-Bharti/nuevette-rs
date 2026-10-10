@@ -1,9 +1,3 @@
-//! Nuevette's look on top of Ely, in two modes. Dark: a near-black base under
-//! a teal glow with translucent white hairlines. Light ("frosted"): an
-//! off-white base under a mint glow with white frosted cards and soft ink
-//! hairlines. Both use teal for the accent and green for "done". Components
-//! read everything through `cx.theme()`.
-
 use ely_gpui_component::theme::{Mode, Palette, Theme};
 use gpui::{App, Hsla, WindowAppearance, rgba};
 
@@ -30,7 +24,6 @@ const DARK: &[(&str, u32)] = &[
     ("danger", 0xF06B6BFF),
 ];
 
-/// A deeper teal than dark mode's, so white text on it stays readable.
 const LIGHT: &[(&str, u32)] = &[
     ("bg", 0xF2F5F5FF),
     ("surface", 0xFFFFFFFF),
@@ -84,7 +77,6 @@ pub fn resolve(choice: ThemeChoice, appearance: WindowAppearance) -> Mode {
     }
 }
 
-/// Shows the saved choice, cross-fading from the current mode.
 pub fn apply(appearance: WindowAppearance, cx: &mut App) {
     let mode = resolve(cx.global::<Settings>().theme, appearance);
     if cx.global::<Theme>().mode() != mode {
@@ -92,7 +84,6 @@ pub fn apply(appearance: WindowAppearance, cx: &mut App) {
     }
 }
 
-/// `base` with `amount` of `over` mixed in, kept opaque so cards hide the grid.
 pub fn blend(base: Hsla, over: Hsla, amount: f32) -> Hsla {
     let mut mixed = over.opacity(amount);
     mixed = base.blend(mixed);
